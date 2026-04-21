@@ -23,8 +23,83 @@ Every time an AI agent starts or resumes a session in this repo, before reading 
 2. **Run `git status`** to see the true state of the working tree. If there are modified or untracked files that represent completed work from a prior session, commit and push them before doing anything else.
 3. **Confirm a PR is open** for the current branch (`gh pr view` or equivalent). If no PR exists and work has already been pushed, open one now.
 4. **Check README staleness** against any changes already in the branch that have not yet triggered a README update (repo layout, CLI commands, quick-start steps, graph topology).
+5. **Open or resume a session report** — see §1b.
 
 Rationale: context windows end abruptly. A session summary compresses history and drops standing obligations (README, commit, PR). The checklist exists precisely because the summary cannot be trusted to carry them forward.
+
+---
+
+## 1b. Session report — mandatory running log
+
+Every AI agent session **must** produce a structured report file that a second agent (or human) can read to understand exactly what was done and resume from the middle without re-reading the conversation.
+
+### File location and naming
+
+```
+reports/sessions/YYYY-MM-DD-HHMMSS-<branch>.md
+```
+
+Example: `reports/sessions/2026-04-21-143000-feat-implementation.md`
+
+Create this file **at the start of the session** (step 5 in §1a). If a report file already exists for the current branch from a recent session (same day), append to it rather than creating a new one.
+
+### Required structure
+
+```markdown
+# Session Report — <branch> — <date>
+
+**Agent:** Claude Code / GitHub Copilot / <tool name>
+**Started:** <ISO timestamp>
+**Branch:** <branch name>
+**Goal:** <one-sentence description of the task from the user>
+
+## Completed steps
+
+<!-- append one entry per logical action, newest at the bottom -->
+
+### [HH:MM] <Action title>
+- **What:** <one-sentence description of what was done>
+- **Files:** <list of files created/modified/deleted>
+- **Spec:** <spec file(s) that authorise this change, if any>
+- **Result:** success | failed | partial
+
+## Pending / next steps
+
+<!-- keep this section up to date — another agent must be able to pick up from here -->
+
+- [ ] <next task>
+- [ ] <next task>
+
+## Blockers
+
+<!-- anything that stopped progress or required a decision -->
+```
+
+### Update rules
+
+| Moment | Required update |
+| ------ | --------------- |
+| After completing any spec change | Add a "Completed steps" entry + update "Pending" |
+| After completing any code change | Add a "Completed steps" entry + update "Pending" |
+| Before every user-facing reply that describes completed work | Verify the report is current; if not, update it first |
+| On session end | Mark all finished items, fill in any remaining "Pending" items |
+
+### Commit and push rules
+
+The session report file **is not committed separately**. It travels in the same commit as the code or spec change it documents — one commit, one report update. Do not leave the report uncommitted when the working tree is otherwise clean.
+
+If the session ends with no code changes (research-only), commit the report file alone.
+
+### Resumption protocol
+
+When an agent starts a session and finds an existing report for the current branch:
+
+1. Read the report top to bottom.
+2. Identify the last "Completed steps" entry — that is the true state of the branch.
+3. Pick up from the first unchecked item in "Pending / next steps".
+4. Do **not** re-derive state from the git log alone — the report captures decisions and context that the log does not.
+
+The report is the handoff contract between sessions. An agent that does not maintain it is breaking continuity for every subsequent agent.
 
 ---
 
@@ -76,6 +151,7 @@ Before writing a reply that describes work as completed, an AI agent **must** ve
 | Branch is pushed | `git log origin/<branch>..HEAD` | empty (no commits ahead of remote) |
 | PR is open | `gh pr view` | PR exists, not draft unless WIP |
 | README is current | Review §10 trigger table against changes in branch | No stale sections |
+| Session report is current | Read `reports/sessions/<branch>.md` | All completed work has a log entry; "Pending" reflects true remaining work |
 
 This sweep is not optional when working is described as finished. A reply that says "done" with a dirty tree, unpushed commits, no PR, or a stale README is incorrect regardless of the quality of the code change.
 

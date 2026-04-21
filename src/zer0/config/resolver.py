@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 
 from cryptography.fernet import Fernet
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from zer0.db.models import CampaignRow, OfferingRow, TenantRow
@@ -94,16 +95,20 @@ class ConfigResolver:
             raise ConfigResolutionError(f"Tenant {tenant_id!r} not found")
 
         discovery = self._merge(
-            offering.discovery_config, campaign.discovery_override, DiscoveryConfig
+            offering.discovery_config, campaign.discovery_override, DiscoveryConfig,
+            "discovery_config", offering.id,
         )
-        icp = self._merge(offering.icp, campaign.icp_override, ICP)
+        icp = self._merge(offering.icp, campaign.icp_override, ICP, "icp", offering.id)
         qualification = self._merge(
             offering.qualification_config,
             campaign.qualification_override,
             QualificationConfig,
+            "qualification_config",
+            offering.id,
         )
         outreach = self._merge(
-            offering.outreach_config, campaign.outreach_override, OutreachConfig
+            offering.outreach_config, campaign.outreach_override, OutreachConfig,
+            "outreach_config", offering.id,
         )
 
         approval_mode: ApprovalMode = (
@@ -132,6 +137,20 @@ class ConfigResolver:
         )
 
     @staticmethod
-    def _merge(base: dict, override: dict | None, model: type) -> object:  # type: ignore[type-arg]
+    def _merge(  # type: ignore[type-arg]
+        base: dict,
+        override: dict | None,
+        model: type,
+        block_name: str = "",
+        offering_id: object = None,
+    ) -> object:
         merged = {**(base or {}), **(override or {})}
-        return model.model_validate(merged)
+        try:
+            return model.model_validate(merged)
+        except ValidationError as exc:
+            label = f"'{block_name}' " if block_name else ""
+            location = f" (offering {offering_id})" if offering_id else ""
+            raise ConfigResolutionError(
+                f"Offering{location} is missing required {label}config fields — "
+                f"configure the offering before triggering the campaign.\n{exc}"
+            ) from exc
