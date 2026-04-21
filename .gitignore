@@ -1,6 +1,7 @@
 __pycache__/
 *.pyc
 .venv/
+.direnv/
 .env
 *.db
 .mypy_cache/
@@ -9,3 +10,4 @@ __pycache__/
 dist/
 *.egg-info/
 .traces/
+.kilo/

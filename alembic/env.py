@@ -8,6 +8,10 @@ from __future__ import annotations
 import os
 from logging.config import fileConfig
 
+from dotenv import load_dotenv
+
+load_dotenv()  # reads .env into os.environ before anything else
+
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
