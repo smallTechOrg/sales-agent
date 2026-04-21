@@ -4,115 +4,217 @@ Status: DRAFT
 
 ## Layered src structure
 
-The implementation follows a strict four-layer model. Each layer has a single
-responsibility and only depends on layers below it.
-
 ```
 ┌──────────────────────────────────────────────┐
-│                    CLI                       │  ← click, rich (humans only)
+│               API / CLI                      │  ← FastAPI (dashboard backend) + click (local)
 ├──────────────────────────────────────────────┤
-│                   GRAPH                      │  ← langgraph: state, nodes, edges
+│                  GRAPH                       │  ← langgraph: state, nodes, edges
 ├──────────────────────────────────────────────┤
-│    TOOLS         │    LLM      │   MEMORY    │  ← typed functions / providers
+│   TOOLS       │    LLM      │    MEMORY      │  ← typed functions / model client / checkpointing
 ├──────────────────────────────────────────────┤
-│              DOMAIN MODELS                   │  ← pydantic: business nouns
+│             DOMAIN MODELS                    │  ← pydantic: business nouns
 └──────────────────────────────────────────────┘
 ```
 
 ### Module responsibilities
 
-| Module           | Responsibility                                                                 |
-| ---------------- | ------------------------------------------------------------------------------ |
-| `domain/`        | Pydantic models for every business noun (Lead, Company, OutreachMessage, etc.) |
-| `tools/`         | Typed functions the agent can call — one file per tool.                        |
-| `llm/`           | Model client + tool JSON schemas the planner sees.                             |
-| `graph/`         | State, nodes, conditional edges, compiled runtime.                             |
-| `memory/`        | Checkpointing — persists loop state across runs.                               |
-| `prompts/`       | Markdown files loaded at runtime — never inlined in Python.                    |
-| `observability/` | Structured logs + console tracer.                                              |
-| `cli/`           | Click commands — the edge of the system.                                       |
-| `config/`        | pydantic-settings, loaded from `.env`.                                         |
+| Module           | Responsibility                                                                  |
+| ---------------- | ------------------------------------------------------------------------------- |
+| `domain/`        | Pydantic models for every business noun.                                        |
+| `tools/`         | Typed tool functions — one file per tool.                                       |
+| `llm/`           | Model client + tool JSON schemas.                                               |
+| `graph/`         | State machine, nodes, conditional edges, compiled runtime.                      |
+| `memory/`        | Checkpointing — persists loop state across runs.                                |
+| `prompts/`       | Markdown templates loaded at runtime. All prompt variables are config-injected. |
+| `observability/` | Structured logs, Slack event posting, audit trail writer.                       |
+| `api/`           | FastAPI routes — the backend for the web dashboard.                             |
+| `cli/`           | Click commands — local dev and admin.                                           |
+| `config/`        | pydantic-settings, loaded from `.env`. System-level secrets only.               |
 
-## Control flow
+---
 
-The agent runs a continuous loop over the four stages. Each stage is a node in the LangGraph graph. Edges are conditional: a lead that fails qualification never reaches outreach.
+## Configuration resolution
+
+Every agent behaviour is driven by resolved configuration. The resolution order is:
 
 ```
-            ┌─────────────┐
-            │  planner    │  ← decides next action given loop state
-            └──────┬──────┘
-                   │
-       ┌───────────▼───────────┐
-       │       discover        │  ← web search, directory scrape → RawLead list
-       └───────────┬───────────┘
-                   │  (for each lead)
-       ┌───────────▼───────────┐
-       │       research        │  ← enrich company + contact → EnrichedLead
-       └───────────┬───────────┘
-                   │
-       ┌───────────▼───────────┐
-       │       qualify         │  ← score against ICP rubric → QualifiedLead | Rejected
-       └───────────┬───────────┘
-                   │  (qualified only)
-       ┌───────────▼───────────┐
-       │       outreach        │  ← draft + send personalised email → SentMessage
-       └───────────┬───────────┘
-                   │
-            ┌──────▼──────┐
-            │  checkpoint │  ← persist state, loop or halt
-            └─────────────┘
+Campaign override → Offering default → validation error (never a silent system default)
 ```
+
+The `ConfigResolver` service is called at the start of every agent tick. It merges `Campaign` overrides onto `Offering` defaults and returns a fully-resolved `ResolvedConfig` model. The agent operates exclusively from `ResolvedConfig` — it never reads `Campaign` or `Offering` fields directly during a run.
+
+This means: change any field in the dashboard → it is picked up on the next tick, with no restart.
+
+---
+
+## Multi-tenancy
+
+Tenant ID is a non-nullable foreign key on every database table. The API enforces tenant scoping on every request via middleware — no query ever runs without a tenant filter. No data crosses tenant boundaries.
+
+---
 
 ## Domain models
 
-| Model            | Fields (key)                                                         |
-| ---------------- | -------------------------------------------------------------------- |
-| `ICP`            | target_industries, target_roles, company_size_range, keywords        |
-| `RawLead`        | name, company, url, source                                           |
-| `EnrichedLead`   | all RawLead fields + company_summary, role_summary, recent_signals   |
-| `QualifiedLead`  | EnrichedLead + score (0–100), rationale                              |
-| `RejectedLead`   | EnrichedLead + rejection_reason                                      |
-| `OutreachDraft`  | lead_id, subject, body, personalisation_notes                        |
-| `SentMessage`    | OutreachDraft + sent_at, message_id                                  |
+### Configuration hierarchy
+
+| Model               | Key fields                                                                                                     |
+| ------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `Tenant`            | id, name, google_oauth_token, whatsapp_api_key, slack_webhook_url, notification_rules, retargeting_policy      |
+| `Offering`          | id, tenant_id, name, description, value_proposition, pain_points, discovery_config, icp, qualification_config, outreach_config |
+| `Campaign`          | id, tenant_id, offering_id, name, discovery_override, icp_override, qualification_override, outreach_override, schedule, volume_cap, approval_mode, status |
+| `ResolvedConfig`    | Fully merged config — the only config object the agent reads during a run. Never persisted; computed on each tick. |
+
+### Granular config models (embedded in Offering / Campaign)
+
+| Model                  | Key fields                                                                                            |
+| ---------------------- | ----------------------------------------------------------------------------------------------------- |
+| `DiscoveryConfig`      | sources (linkedin, web, directories), query_templates, geography, volume_per_run                      |
+| `ICP`                  | target_industries, target_roles, company_size_range, geography, keywords, negative_keywords           |
+| `QualificationConfig`  | rubric_criteria ([{name, description, weight}]), score_threshold, disqualifying_signals               |
+| `OutreachConfig`       | channels_enabled, tone, language_default, templates ({first_touch, follow_up_1..N}), follow_up_count, follow_up_spacing_days, send_schedule |
+
+### Lead pipeline models
+
+| Model             | Key fields                                                                                   |
+| ----------------- | -------------------------------------------------------------------------------------------- |
+| `RawLead`         | id, campaign_id, name, company, url, source                                                  |
+| `EnrichedLead`    | RawLead + company_summary, role_summary, recent_signals, detected_language                   |
+| `QualifiedLead`   | EnrichedLead + score, per_criterion_scores, rationale                                        |
+| `RejectedLead`    | EnrichedLead + rejection_reason, per_criterion_scores                                        |
+| `OutreachDraft`   | lead_id, channel, subject (email only), body, personalisation_notes, config_snapshot         |
+| `SentMessage`     | OutreachDraft + sent_at, message_id, sequence_number                                         |
+| `Reply`           | lead_id, channel, content, received_at, sentiment                                            |
+
+`config_snapshot` on `OutreachDraft` records the exact `ResolvedConfig` used to generate that message — so the audit log shows not just what was sent but what configuration drove it.
+
+---
+
+## Control flow
+
+```
+┌──────────────────────┐
+│   Campaign trigger   │  ← cron schedule or manual kick from dashboard
+└──────────┬───────────┘
+           │
+┌──────────▼───────────┐
+│   ConfigResolver     │  ← merge Campaign overrides onto Offering defaults → ResolvedConfig
+└──────────┬───────────┘
+           │
+┌──────────▼───────────┐
+│      discover        │  ← ResolvedConfig.discovery_config → [RawLead]
+└──────────┬───────────┘
+           │  (per lead)
+┌──────────▼───────────┐
+│      research        │  ← ResolvedConfig.icp signals → EnrichedLead
+└──────────┬───────────┘
+           │
+┌──────────▼───────────┐
+│      qualify         │  ← ResolvedConfig.qualification_config → QualifiedLead | RejectedLead
+└──────────┬───────────┘
+           │
+┌──────────▼───────────┐
+│   approval gate      │  ← ResolvedConfig.approval_mode → auto-pass or wait for human
+└──────────┬───────────┘
+           │  (approved leads only)
+┌──────────▼───────────┐
+│      outreach        │  ← ResolvedConfig.outreach_config → OutreachDraft → SentMessage
+└──────────┬───────────┘
+           │
+┌──────────▼───────────┐
+│   follow-up loop     │  ← waits follow_up_spacing_days, sends up to follow_up_count times
+└──────────┬───────────┘
+           │  (on positive reply)
+┌──────────▼───────────┐
+│      handoff         │  ← flag Responded, post Slack alert, stop outreach
+└──────────────────────┘
+```
+
+Every node reads only from `ResolvedConfig`. No node has hardcoded behaviour.
+
+---
 
 ## Tools
 
-| Tool                  | Input            | Output                          | Notes                                      |
-| --------------------- | ---------------- | ------------------------------- | ------------------------------------------ |
-| `web_search`          | query string     | list of URLs + snippets         | Wraps a search API (e.g. Tavily, Serper).  |
-| `scrape_page`         | URL              | cleaned page text               | Extracts readable content from a webpage.  |
-| `find_contact`        | company URL      | name, email, role               | Finds decision-makers at a company.        |
-| `enrich_lead`         | RawLead          | EnrichedLead                    | Combines scrape + LLM summarisation.       |
-| `qualify_lead`        | EnrichedLead     | QualifiedLead \| RejectedLead   | Scores against ICP using LLM + rubric.     |
-| `draft_outreach`      | QualifiedLead    | OutreachDraft                   | Generates personalised email via LLM.      |
-| `send_email`          | OutreachDraft    | SentMessage                     | Sends via SMTP or transactional API.       |
+| Tool                | Input                      | Output                          | Notes                                              |
+| ------------------- | -------------------------- | ------------------------------- | -------------------------------------------------- |
+| `linkedin_search`   | DiscoveryConfig + ICP      | [RawLead]                       | Searches LinkedIn for matching companies/contacts. |
+| `web_search`        | DiscoveryConfig + ICP      | [RawLead]                       | Keyword search via Tavily/Serper.                  |
+| `directory_search`  | DiscoveryConfig + ICP      | [RawLead]                       | IndiaMART/Justdial fallback.                       |
+| `scrape_page`       | URL                        | cleaned page text               | Extracts readable content.                         |
+| `find_contact`      | company URL + ICP.roles    | name, email, phone, role        | Finds decision-maker contact details.              |
+| `enrich_lead`       | RawLead + ICP              | EnrichedLead                    | Combines scrape + LLM summarisation.               |
+| `qualify_lead`      | EnrichedLead + QualificationConfig | QualifiedLead \| RejectedLead | Scores per rubric criteria via LLM.      |
+| `detect_language`   | EnrichedLead               | language code                   | Infers best outreach language from lead profile.   |
+| `draft_outreach`    | QualifiedLead + OutreachConfig | OutreachDraft               | Generates personalised message via LLM.            |
+| `send_email`        | OutreachDraft + tenant creds | SentMessage                   | Sends via tenant's Google Workspace (OAuth).       |
+| `send_whatsapp`     | OutreachDraft + tenant creds | SentMessage                   | Sends via WhatsApp Business API.                   |
+| `check_replies`     | Campaign + OutreachConfig  | [Reply]                         | Polls for replies; classifies sentiment.           |
+| `post_slack_event`  | event payload + tenant webhook | ack                         | Posts structured event to tenant's Slack.          |
+
+Every tool receives its behavioural parameters from `ResolvedConfig`. No tool has hardcoded logic for a specific tenant or offering.
+
+---
 
 ## Prompts
 
-| File                       | Purpose                                              |
-| -------------------------- | ---------------------------------------------------- |
-| `prompts/planner.md`       | System prompt for the top-level planning node.       |
-| `prompts/researcher.md`    | Instructions for the research node.                  |
-| `prompts/qualifier.md`     | ICP rubric + scoring instructions.                   |
-| `prompts/outreach.md`      | Tone, format, and personalisation rules for emails.  |
+All prompts are markdown templates with `{{variable}}` placeholders. Variables are injected from `ResolvedConfig` at runtime — the offering's value proposition, pain points, ICP, and tone all flow into prompt context dynamically.
 
-## Data flow
+| File                       | Purpose                                                             |
+| -------------------------- | ------------------------------------------------------------------- |
+| `prompts/planner.md`       | Top-level planning node.                                            |
+| `prompts/researcher.md`    | Research and enrichment node.                                       |
+| `prompts/qualifier.md`     | Qualification scoring. Rubric criteria are injected from config.   |
+| `prompts/outreach.md`      | Message drafting. Tone, value prop, pain points injected from config. |
+| `prompts/language.md`      | Language detection and selection.                                   |
 
-```
-CLI (icp.json + config)
-  → graph/agent.py (loop state)
-    → discover node  → [RawLead, ...]
-    → research node  → [EnrichedLead, ...]
-    → qualify node   → [QualifiedLead, ...] + [RejectedLead, ...]
-    → outreach node  → [SentMessage, ...]
-  → memory/checkpoint (persisted state)
-  → observability (structured logs)
-```
+---
+
+## Database
+
+Postgres. Key tables:
+
+| Table         | Notes                                                             |
+| ------------- | ----------------------------------------------------------------- |
+| `tenants`     | One row per tenant.                                               |
+| `offerings`   | One or many per tenant.                                           |
+| `campaigns`   | One or many per offering.                                         |
+| `leads`       | All pipeline stages stored in one table with a `stage` column.   |
+| `messages`    | All sent messages, across all channels and sequence positions.    |
+| `replies`     | All inbound replies.                                              |
+| `events`      | Append-only audit log — every agent action and config snapshot.   |
+
+Soft deletes only. `tenant_id` is non-nullable on every table.
+
+---
+
+## Observability
+
+Every tool call writes an `Event` to the `events` table and posts to the tenant's Slack webhook. The event includes the action type, the lead ID, the outcome, and a snapshot of the `ResolvedConfig` values that drove the decision.
+
+Key event types: `lead.discovered`, `lead.enriched`, `lead.qualified`, `lead.rejected`, `approval.pending`, `approval.granted`, `message.drafted`, `message.sent`, `reply.received`, `handoff.triggered`, `config.resolved`.
+
+---
+
+## Dashboard screens
+
+| Screen            | Purpose                                                                                                   |
+| ----------------- | --------------------------------------------------------------------------------------------------------- |
+| Offerings         | Create and edit offerings. All fields — ICP, rubric, outreach config — editable live.                    |
+| Campaigns         | Create campaigns under an offering. Override any offering field. Set schedule, volume cap, approval mode. |
+| Lead pipeline     | View all leads by stage across all campaigns.                                                             |
+| Qualify review    | Human approval gate — review and approve/reject the qualified shortlist before outreach fires.            |
+| Messages          | Full message history per lead, all channels, all sequence positions.                                      |
+| Events log        | Full audit trail — every action, every config snapshot.                                                   |
+| Tenant settings   | API credentials, Slack webhook, notification rules, re-targeting policy.                                  |
+
+---
 
 ## Implementation rules
 
-1. Types at every boundary. Any function that crosses a module boundary takes and returns Pydantic models — never raw dicts.
-2. Tools are pure-ish functions. A tool takes a Pydantic input, returns a Pydantic output, and logs via `observability`. No hidden state.
-3. The graph is thin. `graph/agent.py` stays under ~50 lines. All behaviour lives in node functions and tool functions.
-4. Prompts are data. They live in `prompts/` as markdown, loaded at runtime.
-5. Secrets via settings. Use `.env` via `pydantic-settings`. Never hard-code.
+1. **Types at every boundary.** Functions crossing module boundaries take and return Pydantic models — never raw dicts.
+2. **Tools are pure-ish functions.** A tool takes a Pydantic input, returns a Pydantic output, logs via `observability`. No hidden state.
+3. **The graph is thin.** `graph/agent.py` stays under ~50 lines. All behaviour lives in node and tool functions.
+4. **Prompts are data.** They live in `prompts/` as markdown with `{{variable}}` placeholders, loaded and injected at runtime.
+5. **No hardcoded behaviour.** If a node or tool contains a value that should be configurable, it isn't done yet.
+6. **Tenant isolation is non-negotiable.** Every query, tool call, and log entry is scoped to a tenant ID.
+7. **Config drives everything.** Nodes and tools read from `ResolvedConfig` only — never from `Campaign` or `Offering` directly.

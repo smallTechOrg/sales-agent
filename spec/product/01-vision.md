@@ -4,20 +4,31 @@ Status: DRAFT
 
 ## What Zer0 is
 
-Zer0 is an autonomous AI sales agent that runs the top of the sales funnel end-to-end — from cold prospecting to booked conversation — without human involvement.
+Zer0 is a **multi-tenant autonomous sales agent platform** that runs the entire top-of-funnel pipeline — from cold prospecting to first positive reply — without human intervention.
 
-Given an ideal customer profile (ICP), Zer0 searches the open internet for companies and individuals that match, researches each lead in depth, scores them against the ICP, and then sends personalised outreach on behalf of the operator. The operator sees only qualified, contacted prospects — they never touch raw leads.
+A tenant defines everything about how the agent behaves via a web dashboard. Zer0 then executes: it searches for leads, researches them, scores them, and sends personalised outreach. Every action is logged, every decision is inspectable, and every event is posted to Slack.
 
-**Target user:** a founder, sales lead, or RevOps operator at a B2B company who wants a full-time SDR working 24/7 without headcount.
+**Primary user (v1):** JP+smallTech's own sales team.  
+**Secondary user (v1+):** JP+smallTech's clients, onboarded as tenants on a managed service basis.  
+**End state:** A self-serve SaaS platform any B2B business can operate independently.
 
-**Core value proposition:** Zer0 collapses four distinct SDR tasks (list building, research, qualification, outreach) into a single automated loop that runs continuously and improves its own targeting as it learns what converts.
+---
 
-## What Zer0 is NOT
+## Core principle: everything is configuration
 
-- Not a CRM. Zer0 generates and contacts leads; it does not manage the ongoing relationship or pipeline stages after the first reply.
-- Not a mass-blast email tool. Every message is researched and personalised to the individual — volume is a byproduct of automation, not the goal.
-- Not a data vendor. Zer0 does not sell or export lead lists. Leads are ephemeral work product in service of outreach.
-- Not a human replacement for complex deals. Zer0 hands off as soon as a lead responds positively; closing is the human's job.
+**Nothing in Zer0 is hardcoded.** Every behavioural parameter — what to search, how to research, how to score, what to say, how often to follow up, who to notify, when to hand off — is a configuration value owned by the tenant. Configuration lives in the database and is editable live via the dashboard. Changes take effect on the next agent tick. No code change. No redeploy. No restart.
+
+This applies at three levels:
+
+```
+Tenant
+ └── Offering          ← what you sell; sets defaults for all campaigns under it
+      └── Campaign      ← a running instance; can override any Offering field
+```
+
+A value set at Campaign level overrides the Offering default. A value set at Offering level is the default for all campaigns under it. Nothing falls back to a hardcoded system value — if a field is unset, the agent surfaces a validation error, not a silent default.
+
+---
 
 ## The four-stage loop
 
@@ -25,33 +36,128 @@ Given an ideal customer profile (ICP), Zer0 searches the open internet for compa
 DISCOVER → RESEARCH → QUALIFY → OUTREACH
 ```
 
-| Stage    | What happens                                                                                      |
-| -------- | ------------------------------------------------------------------------------------------------- |
-| Discover | Agent searches the internet (web, LinkedIn, job boards, directories) for companies and contacts that match the ICP. |
-| Research | Agent deep-dives each prospect: company context, role, recent signals (funding, hiring, news).    |
-| Qualify  | Agent scores the lead against the ICP rubric. Leads below threshold are discarded.               |
-| Outreach | Agent drafts and sends a personalised first-touch email (and optional follow-ups) on the operator's behalf. |
+Every stage is independently configurable per campaign.
 
-## Design principles
+| Stage    | What happens | What is configurable |
+| -------- | ------------ | -------------------- |
+| **Discover** | Agent searches for companies and contacts matching the ICP. | Sources (LinkedIn, web search, directories), search queries, geography, volume target per run. |
+| **Research** | Agent enriches each raw lead with company context, decision-maker details, and public signals. | Depth of research, which signals to look for, which data sources to use. |
+| **Qualify** | Agent scores each lead against the ICP rubric. Below-threshold leads are discarded with a reason. | Rubric criteria and weights, score threshold, what counts as a disqualifying signal. |
+| **Outreach** | Agent drafts and sends personalised messages, then follows up until a reply is received. | Channels, tone, language, message templates, follow-up count, follow-up spacing, send schedule. |
 
-1. **Autonomy first.** The agent must be able to run the full loop without human checkpoints. Human review is opt-in, not required.
-2. **Quality over volume.** A disqualified lead costs nothing to discard; a bad email costs deliverability and reputation. The qualifier must be conservative.
-3. **Transparency.** Every decision — why a lead was discovered, why it was qualified or rejected, what was sent — is logged and inspectable.
-4. **No magic.** Control flow must be explainable in 60 seconds. No framework black boxes.
-5. **Typed at every boundary.** All data flowing between stages is a Pydantic model. No raw dicts.
+---
+
+## What is configurable — complete list
+
+### Tenant level
+- Name, branding.
+- API credentials: Google Workspace OAuth, WhatsApp Business API, Slack webhook.
+- Notification rules: which events trigger Slack alerts and to which channel.
+- Default approval mode for new campaigns (auto-approve qualify step vs. human review).
+- Re-targeting policy: cooldown period before a rejected lead can be re-qualified.
+
+### Offering level (inheritable by campaigns)
+- Name, description, value proposition, key pain points.
+- ICP: target industries, target company sizes, target geographies, target roles, keywords, negative keywords.
+- Qualification rubric: scoring criteria, criterion weights, minimum score threshold.
+- Outreach settings: channels enabled, default tone, default language, message templates (first touch + each follow-up), follow-up count, follow-up spacing.
+- Discovery settings: preferred sources, search query templates, volume per run.
+
+### Campaign level (overrides Offering defaults)
+- Every Offering-level field above can be overridden per campaign.
+- Additionally: run schedule (cron), active/paused status, total lead cap, approval mode override.
+
+### Per-lead (operator-initiated)
+- Manual stage override (move a lead forward or backward in the pipeline).
+- Block a lead permanently (never contact again).
+- Trigger an immediate follow-up outside the normal sequence.
+- Edit an outreach draft before it is sent (if approval mode is enabled).
+
+---
+
+## Approval modes
+
+Configurable per campaign:
+
+| Mode | Behaviour |
+| ---- | --------- |
+| `full_auto` | Agent discovers, qualifies, and sends without any human step. |
+| `approve_qualify` | Human reviews the qualified shortlist before outreach fires. |
+| `approve_messages` | Human sees each drafted message and approves before it is sent. |
+| `approve_all` | Human approves both the qualified shortlist and each message. |
+
+---
+
+## Channels
+
+Configurable per offering/campaign. Enabled channels in v1:
+
+| Channel  | Notes |
+| -------- | ----- |
+| Email    | Via tenant's Google Workspace account (OAuth). |
+| WhatsApp | Via WhatsApp Business API. |
+| LinkedIn | Discovery source only in v1. DM outreach is v2. |
+
+---
+
+## Handoff
+
+Zer0 owns the conversation until a positive reply is received. On positive reply:
+- Lead is flagged **Responded** in the database.
+- Slack notification is sent to the tenant's configured channel.
+- No further automated messages are sent.
+- Human takes over.
+
+The definition of "positive reply" (keyword matching, sentiment threshold) is configurable per campaign.
+
+---
+
+## Data stored per lead
+
+- Full research trail: every source consulted, every signal found.
+- Qualification score and full rationale (per criterion).
+- Every message sent: channel, full text, timestamp, sequence position.
+- Every reply received: channel, content, timestamp, detected sentiment.
+- Full audit log of every agent action and every configuration value active at the time.
+
+---
+
+## Re-targeting
+
+Configurable per tenant/offering/campaign:
+- Cooldown period before a rejected lead re-enters qualification (default: 90 days).
+- Whether previously contacted leads can ever be re-contacted (default: no).
+- Whether a new qualifying signal bypasses the cooldown (configurable).
+
+---
+
+## Monetisation path
+
+| Phase | Model |
+| ----- | ----- |
+| Now | Internal — Zer0 runs campaigns for JP+smallTech. |
+| Near-term | Managed service — JP+smallTech operates Zer0 for clients as tenants. |
+| Later | Self-serve SaaS — tenants onboard and operate independently. |
+
+---
 
 ## Success criteria
 
-- Given an ICP, the agent discovers ≥ 20 qualified leads per hour of runtime without human input.
-- Qualification precision ≥ 80%: at least 8 in 10 leads that pass the qualifier are considered genuinely relevant by a human reviewer.
-- Outreach emails pass a human quality bar: specific to the company, relevant to the role, and not detectable as AI-generated boilerplate.
-- The operator can inspect the full reasoning trace for any lead at any time.
-- The system runs end-to-end from a single CLI command.
+- A tenant can configure a complete offering and launch a campaign in under 30 minutes with no engineering involvement.
+- Any configuration field can be changed on a live campaign and takes effect within one agent tick, with no restart.
+- The agent discovers and qualifies 10–50 leads per day per campaign.
+- Qualification precision ≥ 80%: at least 8 in 10 qualified leads are considered genuinely relevant by a human reviewer.
+- Outreach messages are personalised, pass a human quality bar, and are not detectable as boilerplate.
+- Every agent action is visible in the dashboard and posted to Slack within 60 seconds.
+- The full audit log for any lead shows every decision made and every config value that drove it.
 
-## Out of scope
+---
 
-- CRM sync, pipeline management, or deal tracking.
+## Out of scope (v1)
+
+- LinkedIn DM outreach (LinkedIn is discovery only).
 - Inbound lead handling.
-- Calls, LinkedIn DMs, or any channel other than email (v1).
-- Multi-tenant SaaS infrastructure, billing, or user accounts.
-- A/B testing or deliverability optimisation (future).
+- CRM sync or pipeline management.
+- A/B testing framework.
+- Self-serve tenant sign-up (manual onboarding by JP+smallTech in v1).
+- TRAI/DPDP compliance infrastructure (v2).
