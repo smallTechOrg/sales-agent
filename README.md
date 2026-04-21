@@ -1,4 +1,4 @@
-# Astra — a sales agent, built from scratch
+# Zer0 — autonomous sales agent
 
 > A teaching repo for the **AI For Leaders: Building Agents from Scratch** workshop (v0.1).
 >
@@ -38,7 +38,7 @@ cp .env.example .env
 # ...then paste your ANTHROPIC_API_KEY into .env
 
 # 4. Run
-astra run --lead demo
+zer0 run --lead demo
 ```
 
 You should see the agent plan, call three tools, reflect, and finish — all in the terminal,
@@ -49,9 +49,9 @@ all traced.
 ## Repo layout
 
 ```
-astra-agent/
-├── src/astra/
-│   ├── cli/            # Click-based CLI entrypoint (`astra run`, `astra leads`, ...)
+zer0/
+├── src/zer0/
+│   ├── cli/            # Click-based CLI entrypoint (`zer0 run`, `zer0 leads`, ...)
 │   ├── config/         # pydantic-settings — env + YAML
 │   ├── domain/         # Lead, Email, Activity, Research — the nouns of the business
 │   ├── llm/            # Claude client + tool schema generation
@@ -103,24 +103,24 @@ astra-agent/
 
 | Command                 | What it does                                           |
 | ----------------------- | ------------------------------------------------------ |
-| `astra run --lead X`    | Run the full agent against lead `X`.                   |
-| `astra leads`           | List the sample leads shipped with the repo.           |
-| `astra eval`            | Run the eval suite in `tests/evals`.                   |
-| `astra trace view <id>` | Pretty-print a stored trace.                           |
+| `zer0 run --lead X`    | Run the full agent against lead `X`.                   |
+| `zer0 leads`           | List the sample leads shipped with the repo.           |
+| `zer0 eval`            | Run the eval suite in `tests/evals`.                   |
+| `zer0 trace view <id>` | Pretty-print a stored trace.                           |
 
 ---
 
-## Extending Astra
+## Extending Zer0
 
 Four extensions you'll likely want in the first week:
 
-1. **Plug in your CRM.** Implement `astra.tools.crm.get_lead` / `write_activity` against your
+1. **Plug in your CRM.** Implement `zer0.tools.crm.get_lead` / `write_activity` against your
    real backend. No graph changes needed.
-2. **Add a guardrail.** In `src/astra/graph/nodes.py`, gate `log_to_crm` behind a human
+2. **Add a guardrail.** In `src/zer0/graph/nodes.py`, gate `log_to_crm` behind a human
    approval. There's a `DRY_RUN` env flag wired for exactly this.
-3. **Swap the model.** `astra.llm.client.get_client()` returns a provider-agnostic interface.
+3. **Swap the model.** `zer0.llm.client.get_client()` returns a provider-agnostic interface.
 4. **Write evals.** Add `(lead_id, expected)` pairs under `tests/evals/cases.jsonl` and run
-   `astra eval`.
+   `zer0 eval`.
 
 ---
 

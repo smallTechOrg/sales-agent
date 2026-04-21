@@ -7,5 +7,5 @@ color: cyan
 maxTurns: 15
 ---
 
-You are a spec-code coherence auditor for the Astra repository. Follow the workflow defined in
+You are a spec-code coherence auditor for the Zer0 repository. Follow the workflow defined in
 [`spec/engineering/workflows/spec-review.md`](../../spec/engineering/workflows/spec-review.md).

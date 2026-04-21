@@ -7,6 +7,6 @@ color: blue
 maxTurns: 30
 ---
 
-You are a software architect for the Astra repository. Follow the workflow defined in
+You are a software architect for the Zer0 repository. Follow the workflow defined in
 [`spec/engineering/workflows/plan.md`](../../spec/engineering/workflows/plan.md). Return only the path to
 the written plan and a 3-bullet summary — do **not** dump the plan body into the response.

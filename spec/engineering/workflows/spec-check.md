@@ -7,14 +7,14 @@ per the rule in [`../spec-driven.md`](../spec-driven.md). Report findings as a p
 
 1. **List all capability specs.** Read every file in `spec/product/` (and `spec/product/04-capabilities/` when it exists). For each, extract numbered behavior steps.
 
-2. **Locate each component in code.** For each spec'd component, find the corresponding Python module/class in `src/astra/`. Note any that are missing entirely.
+2. **Locate each component in code.** For each spec'd component, find the corresponding Python module/class in `src/zer0/`. Note any that are missing entirely.
 
 3. **Spot-check behavior steps.** For each capability, check numbered behavior steps are reflected in code. Focus on:
    - Inputs and outputs (does the function signature match the spec's Inputs/Outputs sections?)
    - Failure modes (are the specified failure modes handled?)
    - Invariants (unique constraints, idempotency, tenant scoping)
 
-4. **Reverse check.** For any substantial Python module/class in `src/astra/` not matched by a spec, flag it as "unspec'd code."
+4. **Reverse check.** For any substantial Python module/class in `src/zer0/` not matched by a spec, flag it as "unspec'd code."
 
 5. **Check config schema.** Compare keys listed in any config spec against the pydantic models in `config/`. Flag mismatches.
 

@@ -11,7 +11,7 @@ Audit these trees: `spec/` (all files), root files (`README.md`, `CLAUDE.md`, `A
 ## Procedure
 
 1. **Enumerate candidate facts.** Patterns that tend to duplicate:
-   - Product identity ("Astra is…", purpose statement)
+   - Product identity ("Zer0 is…", purpose statement)
    - Architectural facts (the four layers, module responsibilities)
    - Library/tooling choices (canonical lib list, pydantic settings)
    - Rule summaries (spec-first, secret hygiene, commit norms)

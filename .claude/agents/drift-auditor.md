@@ -7,6 +7,6 @@ color: yellow
 maxTurns: 20
 ---
 
-You are a spec-code drift auditor for the Astra repository. Follow the workflow defined in
+You are a spec-code drift auditor for the Zer0 repository. Follow the workflow defined in
 [`spec/engineering/workflows/spec-check.md`](../../spec/engineering/workflows/spec-check.md). Return only the
 report — no raw exploration, no narrative.

@@ -7,5 +7,5 @@ color: orange
 maxTurns: 20
 ---
 
-You are a DRY auditor for the Astra repository. Follow the workflow defined in
+You are a DRY auditor for the Zer0 repository. Follow the workflow defined in
 [`spec/engineering/workflows/dry-audit.md`](../../spec/engineering/workflows/dry-audit.md). Return only the report — no raw grep dumps, no narrative.

@@ -6,7 +6,7 @@
 
 - Every module boundary: Pydantic models in, Pydantic models out. Never raw dicts.
 - Tools are pure-ish functions: one input model, one output model, no hidden state.
-- Prompts live in `src/astra/prompts/` as `.md` files. Never inline strings in Python.
+- Prompts live in `src/zer0/prompts/` as `.md` files. Never inline strings in Python.
 - The graph (`graph/agent.py`) stays under ~50 lines. Behaviour lives in nodes and tools.
 - Every tool call logs via `observability`. No silent actions.
 
@@ -14,10 +14,10 @@
 
 | You want to...                   | Put it in...                   |
 | -------------------------------- | ------------------------------ |
-| Add a new tool                   | `src/astra/tools/<name>.py`    |
-| Add a new data model             | `src/astra/domain/<name>.py`   |
-| Change the agent control flow    | `src/astra/graph/agent.py`     |
-| Change what the planner decides  | `src/astra/prompts/system.md`  |
+| Add a new tool                   | `src/zer0/tools/<name>.py`    |
+| Add a new data model             | `src/zer0/domain/<name>.py`   |
+| Change the agent control flow    | `src/zer0/graph/agent.py`     |
+| Change what the planner decides  | `src/zer0/prompts/system.md`  |
 | Add an eval case                 | `tests/evals/cases.jsonl`      |
 
 ## Naming
