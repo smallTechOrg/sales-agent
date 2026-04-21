@@ -1,10 +1,13 @@
 """duckduckgo_search adapter.
 
-Spec: spec/product/04-capabilities/01-discovery.md — web source fallback chain
+Spec: spec/product/04-capabilities/01-discovery.md — web source
 Input:  DiscoveryConfig + ICP
 Output: list[RawLead]
 
-No API key required. Used as fallback when Tavily key is not configured.
+No API key required. Always runs alongside any other configured web adapters.
+
+Query templates use {{roles}}, {{industries}}, {{geography}}, {{keywords}},
+{{company_size}} placeholders — see _query_render.py for full reference.
 """
 
 from __future__ import annotations
@@ -14,6 +17,7 @@ import uuid
 from ddgs import DDGS  # type: ignore[import-untyped]
 
 from zer0.domain import DiscoveryConfig, ICP, LeadSource, RawLead
+from zer0.tools._query_render import render_query
 
 
 def duckduckgo_search(
@@ -27,12 +31,8 @@ def duckduckgo_search(
     leads: list[RawLead] = []
 
     with DDGS() as ddgs:
-        for query_template in discovery_config.query_templates:
-            query = query_template.format(
-                industries=" OR ".join(icp.target_industries),
-                roles=" OR ".join(icp.target_roles),
-                geography=" OR ".join(icp.geography),
-            )
+        for template in discovery_config.query_templates:
+            query = render_query(template, discovery_config, icp)
             results = ddgs.text(query, max_results=discovery_config.volume_per_run)
             for result in (results or []):
                 leads.append(

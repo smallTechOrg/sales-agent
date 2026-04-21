@@ -1,9 +1,11 @@
-"""web_search tool.
+"""web_search tool — Tavily adapter.
 
-Spec: spec/product/02-architecture.md — Tools table
+Spec: spec/product/04-capabilities/01-discovery.md — web source
 Input:  DiscoveryConfig + ICP
 Output: list[RawLead]
-Uses Tavily for keyword search.
+
+Query templates use {{roles}}, {{industries}}, {{geography}}, {{keywords}},
+{{company_size}} placeholders — see _query_render.py for full reference.
 """
 
 from __future__ import annotations
@@ -13,6 +15,7 @@ import uuid
 from tavily import TavilyClient  # type: ignore[import-untyped]
 
 from zer0.domain import DiscoveryConfig, ICP, LeadSource, RawLead
+from zer0.tools._query_render import render_query
 
 
 def web_search(
@@ -27,12 +30,8 @@ def web_search(
     client = TavilyClient(api_key=tavily_api_key)
     leads: list[RawLead] = []
 
-    for query_template in discovery_config.query_templates:
-        query = query_template.format(
-            industries=" OR ".join(icp.target_industries),
-            roles=" OR ".join(icp.target_roles),
-            geography=" OR ".join(icp.geography),
-        )
+    for template in discovery_config.query_templates:
+        query = render_query(template, discovery_config, icp)
         results = client.search(query=query, max_results=discovery_config.volume_per_run)
         for result in results.get("results", []):
             leads.append(

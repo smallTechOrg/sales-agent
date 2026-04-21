@@ -1,4 +1,4 @@
-import type { OfferingState } from "@/components/forms/OfferingForm";
+import type { OfferingState, RubricCriterion } from "@/components/forms/OfferingForm";
 
 function toList(s: string): string[] {
   return s.split(",").map((x) => x.trim()).filter(Boolean);
@@ -26,6 +26,8 @@ export function validateOffering(
   if (!form.outreach_language.trim()) e.outreach_language = "Required";
   if (!form.first_touch_template.trim()) e.first_touch_template = "Required";
   if (!form.send_schedule.trim()) e.send_schedule = "Required";
+  if (form.rubric_criteria.filter((c) => c.name.trim()).length === 0)
+    e.name = "At least one qualification criterion is required";
   return e;
 }
 
@@ -54,13 +56,13 @@ export function buildOfferingBody(form: OfferingState): Record<string, unknown> 
       volume_per_run: Number(form.discovery_volume) || 50,
     },
     qualification_config: {
-      rubric_criteria: [
-        {
-          name: "Overall fit",
-          description: form.value_proposition.trim() || "Matches the ideal customer profile",
-          weight: 1.0,
-        },
-      ],
+      rubric_criteria: form.rubric_criteria
+        .filter((c) => c.name.trim())
+        .map((c) => ({
+          name: c.name.trim(),
+          description: c.description.trim() || c.name.trim(),
+          weight: Math.max(0.01, Math.min(1.0, Number(c.weight) || 0.1)),
+        })),
       score_threshold: threshold,
       disqualifying_signals: toList(form.disqualifying_signals),
     },
@@ -86,6 +88,13 @@ export function offeringRowToState(o: Record<string, unknown>): OfferingState {
   const tpls = (out.templates as Record<string, string> | null) ?? {};
   const sizeRange = (icp.company_size_range as { min?: number; max?: number } | null) ?? {};
 
+  const rawCriteria = (qual.rubric_criteria as Array<Record<string, unknown>> | null) ?? [];
+  const rubric_criteria: RubricCriterion[] = rawCriteria.map((c) => ({
+    name: String(c.name ?? ""),
+    description: String(c.description ?? ""),
+    weight: String(c.weight ?? "0.1"),
+  }));
+
   return {
     name: String(o.name ?? ""),
     value_proposition: String(o.value_proposition ?? ""),
@@ -101,6 +110,9 @@ export function offeringRowToState(o: Record<string, unknown>): OfferingState {
     discovery_queries: ((disc.query_templates as string[]) ?? []).join("\n"),
     discovery_geography: ((disc.geography as string[]) ?? []).join(", "),
     discovery_volume: String(disc.volume_per_run ?? 50),
+    rubric_criteria: rubric_criteria.length > 0
+      ? rubric_criteria
+      : [{ name: "Overall fit", description: "Matches the ideal customer profile", weight: "1.0" }],
     qualification_threshold: String(qual.score_threshold ?? 60),
     disqualifying_signals: ((qual.disqualifying_signals as string[]) ?? []).join(", "),
     outreach_channels: ((out.channels_enabled as string[]) ?? []).join(", "),

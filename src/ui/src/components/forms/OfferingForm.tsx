@@ -1,5 +1,11 @@
 "use client";
 
+export interface RubricCriterion {
+  name: string;
+  description: string;
+  weight: string; // 0.0–1.0 as string for input
+}
+
 export interface OfferingState {
   // Basics
   name: string;
@@ -19,6 +25,7 @@ export interface OfferingState {
   discovery_geography: string;
   discovery_volume: string;
   // Qualification
+  rubric_criteria: RubricCriterion[];
   qualification_threshold: string;
   disqualifying_signals: string;
   // Outreach
@@ -43,9 +50,15 @@ export const OFFERING_DEFAULTS: OfferingState = {
   company_size_min: "10",
   company_size_max: "500",
   discovery_sources: "web",
-  discovery_queries: "{{role}} at {{industry}} company",
+  discovery_queries:
+    '{{roles}} {{industries}} company {{geography}}\nsite:linkedin.com/company {{industries}} "{{roles}}"',
   discovery_geography: "United States",
   discovery_volume: "50",
+  rubric_criteria: [
+    { name: "ICP fit", description: "Company matches the ideal customer profile", weight: "0.5" },
+    { name: "Budget signal", description: "Signs of budget or active buying intent", weight: "0.3" },
+    { name: "Decision maker", description: "Contact is a decision maker for this purchase", weight: "0.2" },
+  ],
   qualification_threshold: "60",
   disqualifying_signals: "",
   outreach_channels: "email",
@@ -160,12 +173,98 @@ export function OfferingForm({ value, onChange, errors }: OfferingFormProps) {
       {/* Discovery */}
       <SectionHeader title="Discovery" subtitle="Controls how the agent finds leads each run." />
       <Field id="disc-sources" label="Discovery sources" value={value.discovery_sources} onChange={set("discovery_sources")} hint="Comma-separated: web, linkedin, directory" placeholder="web, linkedin" error={errors?.discovery_sources} required />
-      <Field id="disc-queries" label="Query templates" value={value.discovery_queries} onChange={set("discovery_queries")} multiline rows={2} hint="One template per line. Use {{role}}, {{industry}}, {{geography}} as placeholders." placeholder={"{{role}} at {{industry}} company\n{{role}} {{industry}} {{geography}}"} error={errors?.discovery_queries} required />
+      <Field
+        id="disc-queries"
+        label="Query templates"
+        value={value.discovery_queries}
+        onChange={set("discovery_queries")}
+        multiline
+        rows={4}
+        hint="One search query per line. Variables: {{roles}}, {{industries}}, {{geography}}, {{keywords}}, {{company_size}}"
+        placeholder={"{{roles}} {{industries}} company {{geography}}\nsite:linkedin.com/company {{industries}} \"{{roles}}\""}
+        error={errors?.discovery_queries}
+        required
+      />
       <Field id="disc-geo" label="Discovery geography" value={value.discovery_geography} onChange={set("discovery_geography")} hint="Comma-separated countries or regions to search." placeholder="United States, Canada" error={errors?.discovery_geography} required />
       <Field id="disc-vol" label="Volume per run" value={value.discovery_volume} onChange={set("discovery_volume")} hint="Max leads to discover per campaign run (1–1000)." placeholder="50" error={errors?.discovery_volume} required />
 
       {/* Qualification */}
-      <SectionHeader title="Qualification" subtitle="How the agent decides which leads are worth contacting." />
+      <SectionHeader title="Qualification" subtitle="How the agent scores and filters leads. Weights should sum to 1.0." />
+
+      <div className="flex flex-col gap-3">
+        <div className="flex items-center justify-between">
+          <span className="text-sm font-medium text-slate-300">Scoring rubric <span className="text-red-400">*</span></span>
+          <button
+            type="button"
+            onClick={() => onChange({
+              ...value,
+              rubric_criteria: [...value.rubric_criteria, { name: "", description: "", weight: "0.1" }],
+            })}
+            className="text-xs text-indigo-400 hover:text-indigo-300"
+          >
+            + Add criterion
+          </button>
+        </div>
+
+        {value.rubric_criteria.map((c, i) => (
+          <div key={i} className="rounded-lg bg-slate-800/60 border border-slate-700 p-3 flex flex-col gap-2">
+            <div className="flex gap-2">
+              <input
+                type="text"
+                placeholder="Criterion name"
+                className={inputCls + " flex-1"}
+                value={c.name}
+                onChange={(e) => {
+                  const updated = [...value.rubric_criteria];
+                  updated[i] = { ...c, name: e.target.value };
+                  onChange({ ...value, rubric_criteria: updated });
+                }}
+              />
+              <div className="flex items-center gap-1 w-28">
+                <input
+                  type="number"
+                  min={0.01}
+                  max={1}
+                  step={0.01}
+                  placeholder="Weight"
+                  className={inputCls + " w-20"}
+                  value={c.weight}
+                  onChange={(e) => {
+                    const updated = [...value.rubric_criteria];
+                    updated[i] = { ...c, weight: e.target.value };
+                    onChange({ ...value, rubric_criteria: updated });
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    const updated = value.rubric_criteria.filter((_, j) => j !== i);
+                    onChange({ ...value, rubric_criteria: updated });
+                  }}
+                  className="text-slate-500 hover:text-red-400 text-lg leading-none"
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+            <input
+              type="text"
+              placeholder="What does this criterion measure?"
+              className={inputCls}
+              value={c.description}
+              onChange={(e) => {
+                const updated = [...value.rubric_criteria];
+                updated[i] = { ...c, description: e.target.value };
+                onChange({ ...value, rubric_criteria: updated });
+              }}
+            />
+          </div>
+        ))}
+        {value.rubric_criteria.length === 0 && (
+          <p className="text-xs text-red-400">At least one criterion is required.</p>
+        )}
+      </div>
+
       <div className="flex flex-col gap-1">
         <label className="text-sm font-medium text-slate-300">
           Score threshold: {value.qualification_threshold}
