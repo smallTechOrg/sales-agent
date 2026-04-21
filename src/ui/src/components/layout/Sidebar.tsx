@@ -18,6 +18,7 @@ export function Sidebar() {
   const tenantNav: NavItem[] = activeTenantId
     ? [
         { label: "Overview", href: `/${activeTenantId}` },
+        { label: "Offerings", href: `/${activeTenantId}/offerings` },
         { label: "Approvals", href: `/${activeTenantId}/approvals` },
         { label: "Messages", href: `/${activeTenantId}/messages` },
         { label: "Events", href: `/${activeTenantId}/events` },
