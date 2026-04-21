@@ -44,7 +44,11 @@ export default function DashboardPage() {
       <div className="flex flex-col gap-2 mb-6">
         {knownTenantIds.length === 0 && !loading && (
           <div className="text-slate-500 text-sm py-8 text-center">
-            No tenants yet. Create one or add an existing tenant ID below.
+            No tenants yet.{" "}
+            <Link href="/tenants/new" className="text-indigo-400 hover:text-indigo-300 underline">
+              Create your first tenant
+            </Link>{" "}
+            to get started.
           </div>
         )}
         {knownTenantIds.map((id, i) => {
@@ -77,12 +81,16 @@ export default function DashboardPage() {
         })}
       </div>
 
-      {/* Add existing tenant by UUID */}
-      <div className="rounded-lg bg-slate-900 border border-slate-800 p-4">
-        <p className="text-sm text-slate-400 mb-2">
-          Add an existing tenant by UUID (already in the DB):
-        </p>
-        <div className="flex gap-2">
+      {/* Add existing tenant by UUID (secondary / advanced) */}
+      <details className="rounded-lg bg-slate-900 border border-slate-800">
+        <summary className="cursor-pointer px-4 py-3 text-sm text-slate-500 hover:text-slate-300 select-none">
+          Add an existing tenant by UUID&hellip;
+        </summary>
+        <div className="px-4 pb-4 pt-2">
+          <p className="text-xs text-slate-500 mb-2">
+            Only needed if a tenant was created outside the UI (e.g. via the CLI).
+          </p>
+          <div className="flex gap-2">
           <input
             type="text"
             className="flex-1 rounded bg-slate-800 border border-slate-700 px-3 py-1.5 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:border-indigo-500"
@@ -104,7 +112,8 @@ export default function DashboardPage() {
         {addError && (
           <p className="text-xs text-red-400 mt-1">{addError}</p>
         )}
-      </div>
+        </div>
+      </details>
     </div>
   );
 }

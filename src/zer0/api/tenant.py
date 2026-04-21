@@ -1,9 +1,14 @@
-"""Tenant settings endpoints.
+"""Tenant endpoints.
 
-Spec: spec/product/04-api.md — GET /tenant, PATCH /tenant
+Spec: spec/product/09-api.md
+  POST   /tenants          — create a new tenant (no X-Tenant-ID required)
+  GET    /tenant           — get current tenant settings
+  PATCH  /tenant           — update current tenant settings
 """
 
 from __future__ import annotations
+
+import uuid
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
@@ -12,7 +17,29 @@ from sqlalchemy.orm import Session
 from zer0.api._common import api_error, get_current_tenant_id, ok
 from zer0.db import TenantRow, get_session
 
+# Plural router — unauthenticated tenant creation
+tenants_router = APIRouter(prefix="/tenants")
+
+# Singular router — operations on an existing tenant (requires X-Tenant-ID)
 router = APIRouter(prefix="/tenant")
+
+
+class TenantCreate(BaseModel):
+    name: str
+
+
+@tenants_router.post("")
+def create_tenant(
+    body: TenantCreate,
+    session: Session = Depends(get_session),
+):
+    if not body.name.strip():
+        raise api_error("VALIDATION_ERROR", "name is required", 422)
+    t = TenantRow(id=str(uuid.uuid4()), name=body.name.strip())
+    session.add(t)
+    session.commit()
+    session.refresh(t)
+    return ok(TenantOut(id=t.id, name=t.name, retargeting_cooldown_days=t.retargeting_cooldown_days, default_approval_mode=t.default_approval_mode))
 
 
 class TenantOut(BaseModel):

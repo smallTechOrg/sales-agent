@@ -58,8 +58,6 @@ export default function NewTenantPage() {
   >({});
   const [saveError, setSaveError] = useState("");
   const [saving, setSaving] = useState(false);
-  // Saved offering ID after the API call in step 2→3
-  const [savedOfferingId, setSavedOfferingId] = useState<string | null>(null);
 
   const next = async () => {
     if (step === 0) {
@@ -73,8 +71,7 @@ export default function NewTenantPage() {
     }
 
     if (step === 1) {
-      // NOTE: POST /api/v1/tenants does not exist yet.
-      // For now, skip straight to offering creation with a warning.
+      // Credentials are optional and can be configured post-onboarding in Settings.
       setStep(2);
       return;
     }
@@ -106,17 +103,51 @@ export default function NewTenantPage() {
     }
   };
 
+  const splitList = (s: string) =>
+    s.split(",").map((v) => v.trim()).filter(Boolean);
+
   const handleSave = async () => {
     setSaving(true);
     setSaveError("");
     try {
-      // POST /api/v1/tenants — NOT YET IMPLEMENTED ON BACKEND
-      // Show a clear message to the user.
-      throw new Error(
-        "POST /api/v1/tenants is not yet implemented. " +
-          "Create the tenant via the CLI (`zer0 tenant add`) and then use " +
-          "the Dashboard home to add its UUID."
-      );
+      // 1. Create tenant
+      const tenant = await api.createTenant(tenantName.trim());
+      const tenantId = tenant.id;
+
+      // 2. Create offering
+      const offeringBody: Record<string, unknown> = {
+        name: offering.name.trim(),
+        value_proposition: offering.value_proposition.trim(),
+        description: offering.icp_description.trim() || null,
+        icp: {
+          target_industries: splitList(offering.target_industries),
+          target_roles: splitList(offering.target_roles),
+          keywords: splitList(offering.keywords),
+        },
+      };
+      const createdOffering = await api.createOffering(tenantId, offeringBody);
+      const offeringId = createdOffering.id;
+
+      // 3. Create campaign
+      const campaignBody: Record<string, unknown> = {
+        name: campaign.name.trim(),
+        offering_id: offeringId,
+        approval_mode: campaign.approval_mode,
+        qualification_override: {
+          threshold: campaign.qualification_threshold,
+        },
+        outreach_override: {
+          channels: splitList(campaign.outreach_channels),
+          follow_up_count: campaign.follow_up_count,
+          follow_up_spacing_days: campaign.follow_up_spacing_days,
+        },
+      };
+      await api.createCampaign(tenantId, campaignBody);
+
+      // 4. Register tenant locally and navigate to its dashboard
+      addKnownTenant(tenantId);
+      setActiveTenant(tenantId);
+      router.push(`/${tenantId}`);
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -150,30 +181,7 @@ export default function NewTenantPage() {
         <CampaignForm
           value={campaign}
           onChange={setCampaign}
-          offerings={
-            savedOfferingId
-              ? [
-                  {
-                    id: savedOfferingId,
-                    tenant_id: "",
-                    name: offering.name,
-                    value_proposition: offering.value_proposition,
-                    description: offering.icp_description || null,
-                    pain_points: null,
-                    icp: {
-                      target_industries: offering.target_industries.split(",").map((s) => s.trim()),
-                      target_roles: offering.target_roles.split(",").map((s) => s.trim()),
-                      keywords: offering.keywords.split(",").map((s) => s.trim()),
-                    },
-                    discovery_config: null,
-                    qualification_config: null,
-                    outreach_config: null,
-                    created_at: new Date().toISOString(),
-                    updated_at: new Date().toISOString(),
-                  },
-                ]
-              : []
-          }
+          offerings={[]}
           errors={campaignErrors}
         />
       )}

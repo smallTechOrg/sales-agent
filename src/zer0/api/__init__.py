@@ -16,6 +16,7 @@ from zer0.api.leads import router as leads_router
 from zer0.api.messages import router as messages_router
 from zer0.api.offerings import router as offerings_router
 from zer0.api.tenant import router as tenant_router
+from zer0.api.tenant import tenants_router
 from zer0.observability.events import configure_logging
 
 _PREFIX = "/api/v1"
@@ -28,6 +29,7 @@ def create_app() -> FastAPI:
     app.include_router(health_router, prefix=_PREFIX)
     app.include_router(auth_router, prefix=_PREFIX)
     app.include_router(tenant_router, prefix=_PREFIX)
+    app.include_router(tenants_router, prefix=_PREFIX)
     app.include_router(offerings_router, prefix=_PREFIX)
     app.include_router(campaigns_router, prefix=_PREFIX)
     app.include_router(leads_router, prefix=_PREFIX)

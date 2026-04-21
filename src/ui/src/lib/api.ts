@@ -207,7 +207,11 @@ export interface DecisionResult {
 export const api = {
   health: () => get<HealthData>("/api/v1/health", null),
 
-  // Tenant
+  // Tenants (creation — no tenant ID required)
+  createTenant: (name: string) =>
+    post<TenantData>("/api/v1/tenants", null, { name }),
+
+  // Tenant (settings on an existing tenant)
   getTenant: (tenantId: string) =>
     get<TenantData>("/api/v1/tenant", tenantId),
   patchTenant: (tenantId: string, body: Partial<TenantData>) =>
