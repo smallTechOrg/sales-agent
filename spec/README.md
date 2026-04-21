@@ -13,8 +13,9 @@ The foundational rule — change the spec first, then code — lives in
 
 1. [`product/01-vision.md`](product/01-vision.md) — what Zer0 is and is not
 2. [`product/02-architecture.md`](product/02-architecture.md) — components, abstractions, data flow, and the layered src structure
-
-More files will be added here as the product is redefined.
+3. [`product/03-db-schema.md`](product/03-db-schema.md) — full Postgres schema: tables, columns, types, constraints, indexes
+4. [`product/04-api.md`](product/04-api.md) — REST API contract: endpoints, request/response shapes, auth, error codes
+5. [`product/05-agent-graph.md`](product/05-agent-graph.md) — LangGraph design: state schema, nodes, edges, checkpointing
 
 ## Engineering (`engineering/`)
 
