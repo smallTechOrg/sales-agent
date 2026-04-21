@@ -1,6 +1,6 @@
 """Graph edges — conditional routing functions.
 
-Spec: spec/product/05-agent-graph.md — Edges
+Spec: spec/product/10-agent-graph.md — Edges
 """
 
 from __future__ import annotations

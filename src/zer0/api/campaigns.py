@@ -1,6 +1,6 @@
 """Campaigns endpoints.
 
-Spec: spec/product/04-api.md — /campaigns
+Spec: spec/product/09-api.md — /campaigns
 """
 
 from __future__ import annotations
@@ -142,12 +142,19 @@ def trigger_campaign(
     tenant_id: str = Depends(get_current_tenant_id),
     session: Session = Depends(get_session),
 ):
-    """Manually trigger a campaign run in the background."""
-    _get_or_404(campaign_id, tenant_id, session)  # validates existence
+    """Manually trigger a campaign run in the background.
+
+    Spec: spec/product/09-api.md — POST /campaigns/{id}/trigger
+    Returns run_id so the caller can poll GET /events for progress.
+    """
+    import uuid as _uuid
+
+    _get_or_404(campaign_id, tenant_id, session)  # validates existence + tenant isolation
+    run_id = str(_uuid.uuid4())
 
     def _run():
         from zer0.graph.runner import run_campaign
-        run_campaign(campaign_id=campaign_id, tenant_id=tenant_id)
+        run_campaign(campaign_id=campaign_id, tenant_id=tenant_id, run_id=run_id)
 
     background_tasks.add_task(_run)
-    return ok({"triggered": True, "campaign_id": campaign_id})
+    return ok({"run_id": run_id, "message": "Campaign run queued."})

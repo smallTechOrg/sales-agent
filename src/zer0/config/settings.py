@@ -25,20 +25,21 @@ class Settings(BaseSettings):
     database_url: str = Field(..., description="Postgres connection URL. Required.")
 
     # LLM
-    anthropic_api_key: str = Field(..., description="Anthropic API key. Required.")
-    llm_model: str = Field("claude-sonnet-4-6", description="Anthropic model ID.")
+    llm_provider: str = Field("gemini", description="LLM provider: gemini (default).")
+    gemini_api_key: str = Field(..., description="Google Gemini API key. Required.")
+    llm_model: str = Field("gemini-2.0-flash", description="LLM model ID.")
     llm_max_tokens: int = Field(4096, ge=256, le=16384)
 
-    # Web search
-    tavily_api_key: str = Field(..., description="Tavily search API key. Required.")
+    # Web search — empty string disables discovery at runtime
+    tavily_api_key: str = Field("", description="Tavily search API key. Leave blank to disable discovery.")
 
-    # JWT auth
-    jwt_secret: str = Field(..., description="Secret key for signing JWTs. Required.")
+    # JWT auth — unused while UI is open; kept for future hardening
+    jwt_secret: str = Field("", description="Secret key for signing JWTs. Optional while auth is disabled.")
     jwt_algorithm: str = Field("HS256")
 
     # Encryption key for tenant credentials at rest
     credential_encryption_key: str = Field(
-        ..., description="Fernet key for encrypting tenant credentials. Required."
+        "", description="Fernet key for encrypting tenant credentials. Required when sending outreach."
     )
 
     # Server

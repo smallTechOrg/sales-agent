@@ -1,7 +1,10 @@
 """Auth endpoint — issue JWT for a tenant.
 
-Spec: spec/product/04-api.md — POST /auth/token
+Spec: spec/product/09-api.md — POST /auth/token
 No JWT required for this endpoint.
+
+NOTE: Google OAuth (as specced) is deferred. For now a simple shared-secret
+per-tenant is used so the operator can log in without a Google app setup.
 """
 
 from __future__ import annotations
@@ -22,7 +25,7 @@ router = APIRouter(prefix="/auth")
 
 class TokenRequest(BaseModel):
     tenant_id: str
-    secret: str  # simple shared secret per tenant (not a password — validated against DB)
+    secret: str  # shared secret validated against tenant.auth_secret_hash (plain for now)
 
 
 @router.post("/token")
@@ -30,7 +33,11 @@ def issue_token(
     body: TokenRequest,
     session: Session = Depends(get_session),
 ):
-    """Issue a short-lived JWT for the given tenant."""
+    """Issue a short-lived JWT for the given tenant.
+
+    The secret is compared against the stored value in plain text for now.
+    Swap for bcrypt verify when hardening for production.
+    """
     tenant: TenantRow | None = (
         session.query(TenantRow)
         .filter(TenantRow.id == body.tenant_id, TenantRow.deleted_at.is_(None))
@@ -43,8 +50,12 @@ def issue_token(
     now = datetime.now(tz=timezone.utc)
     payload = {
         "tenant_id": body.tenant_id,
+        "sub": body.tenant_id,
         "iat": now,
         "exp": now + timedelta(hours=8),
     }
     token = jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
-    return ok({"access_token": token, "token_type": "bearer"})
+    expires_at = (now + timedelta(hours=8)).isoformat()
+    return ok({"access_token": token, "expires_at": expires_at})
+
+

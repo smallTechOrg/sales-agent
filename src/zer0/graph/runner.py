@@ -15,13 +15,16 @@ from zer0.graph.state import AgentState
 log = structlog.get_logger(__name__)
 
 
-def run_campaign(*, campaign_id: str, tenant_id: str) -> AgentState:
+def run_campaign(*, campaign_id: str, tenant_id: str, run_id: str | None = None) -> AgentState:
     """Invoke the agent graph for a single campaign run.
 
-    Returns the final AgentState after the run completes (or parks at approval gate).
+    Returns the final AgentState. Supply run_id from the API trigger so the
+    same ID appears in event logs and the trigger response.
     """
+    import uuid as _uuid
+
     initial: AgentState = {
-        "run_id": str(uuid.uuid4()),
+        "run_id": run_id or str(_uuid.uuid4()),
         "campaign_id": campaign_id,
         "tenant_id": tenant_id,
         "raw_leads": [],

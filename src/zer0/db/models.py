@@ -1,6 +1,6 @@
 """SQLAlchemy ORM models.
 
-Spec: spec/product/03-db-schema.md
+Spec: spec/product/07-data-model.md
 Every table carries tenant_id; no query should run without a tenant filter.
 Sensitive credential columns are suffixed _enc (encrypted by the application).
 """
@@ -50,8 +50,8 @@ class TenantRow(Base):
     whatsapp_api_key_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
     slack_webhook_url_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
     notification_rules: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    retargeting_cooldown_days: Mapped[int] = mapped_column(Integer, nullable=False, default=90)
-    default_approval_mode: Mapped[str] = mapped_column(String(64), nullable=False, default="approve_all")
+    retargeting_cooldown_days: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
+    default_approval_mode: Mapped[str] = mapped_column(String(64), nullable=False, default="full_auto")
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False, default=_now)
     updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False, default=_now, onupdate=_now)
     deleted_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)

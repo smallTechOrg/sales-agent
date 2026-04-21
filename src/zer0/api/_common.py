@@ -7,14 +7,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from jose import JWTError, jwt
+from fastapi import Header, HTTPException, status
 from pydantic import BaseModel
-
-from zer0.config.settings import get_settings
-
-_bearer = HTTPBearer()
 
 
 class OKResponse(BaseModel):
@@ -53,27 +47,14 @@ def api_error(code: str, message: str, status_code: int = 400) -> HTTPException:
 
 
 # ---------------------------------------------------------------------------
-# JWT auth dependency
+# Tenant identity dependency — no auth for now, operator uses UI directly
 # ---------------------------------------------------------------------------
 
-def get_current_tenant_id(
-    creds: HTTPAuthorizationCredentials = Depends(_bearer),
-) -> str:
-    """Decode JWT and return tenant_id claim. Raises 401 on any failure."""
-    settings = get_settings()
-    try:
-        payload = jwt.decode(
-            creds.credentials,
-            settings.jwt_secret,
-            algorithms=["HS256"],
-        )
-        tenant_id: str = payload.get("tenant_id", "")
-        if not tenant_id:
-            raise ValueError("missing tenant_id claim")
-        return tenant_id
-    except (JWTError, ValueError) as exc:
+def get_current_tenant_id(x_tenant_id: str = Header(...)) -> str:
+    """Extract tenant identity from the X-Tenant-ID request header."""
+    if not x_tenant_id:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={"data": None, "error": {"code": "UNAUTHORIZED", "message": str(exc)}},
-            headers={"WWW-Authenticate": "Bearer"},
-        ) from exc
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"data": None, "error": {"code": "MISSING_TENANT", "message": "X-Tenant-ID header is required"}},
+        )
+    return x_tenant_id
