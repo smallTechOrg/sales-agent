@@ -8,20 +8,12 @@ import {
   CredentialsForm,
   type CredentialsState,
 } from "@/components/forms/CredentialsForm";
-import { OfferingForm, type OfferingState } from "@/components/forms/OfferingForm";
+import { OfferingForm, OFFERING_DEFAULTS, type OfferingState } from "@/components/forms/OfferingForm";
 import { CampaignForm, type CampaignState } from "@/components/forms/CampaignForm";
 import { WizardReview } from "@/components/forms/WizardReview";
 import { useTenant } from "@/lib/tenant-context";
 import { api } from "@/lib/api";
-
-const EMPTY_OFFERING: OfferingState = {
-  name: "",
-  value_proposition: "",
-  icp_description: "",
-  target_industries: "",
-  target_roles: "",
-  keywords: "",
-};
+import { buildOfferingBody, validateOffering } from "@/lib/offering-utils";
 
 const EMPTY_CAMPAIGN: CampaignState = {
   name: "",
@@ -48,7 +40,7 @@ export default function NewTenantPage() {
   const [tenantName, setTenantName] = useState("");
   const [nameError, setNameError] = useState("");
   const [credentials, setCredentials] = useState<CredentialsState>(EMPTY_CREDS);
-  const [offering, setOffering] = useState<OfferingState>(EMPTY_OFFERING);
+  const [offering, setOffering] = useState<OfferingState>(OFFERING_DEFAULTS);
   const [offeringErrors, setOfferingErrors] = useState<
     Partial<Record<keyof OfferingState, string>>
   >({});
@@ -71,16 +63,12 @@ export default function NewTenantPage() {
     }
 
     if (step === 1) {
-      // Credentials are optional and can be configured post-onboarding in Settings.
       setStep(2);
       return;
     }
 
     if (step === 2) {
-      const errs: Partial<Record<keyof OfferingState, string>> = {};
-      if (!offering.name.trim()) errs.name = "Required.";
-      if (!offering.value_proposition.trim())
-        errs.value_proposition = "Required.";
+      const errs = validateOffering(offering);
       if (Object.keys(errs).length) {
         setOfferingErrors(errs);
         return;
@@ -103,48 +91,33 @@ export default function NewTenantPage() {
     }
   };
 
-  const splitList = (s: string) =>
-    s.split(",").map((v) => v.trim()).filter(Boolean);
-
   const handleSave = async () => {
     setSaving(true);
     setSaveError("");
     try {
-      // 1. Create tenant
       const tenant = await api.createTenant(tenantName.trim());
       const tenantId = tenant.id;
 
-      // 2. Create offering
-      const offeringBody: Record<string, unknown> = {
-        name: offering.name.trim(),
-        value_proposition: offering.value_proposition.trim(),
-        description: offering.icp_description.trim() || null,
-        icp: {
-          target_industries: splitList(offering.target_industries),
-          target_roles: splitList(offering.target_roles),
-          keywords: splitList(offering.keywords),
-        },
-      };
-      const createdOffering = await api.createOffering(tenantId, offeringBody);
+      const createdOffering = await api.createOffering(tenantId, buildOfferingBody(offering));
       const offeringId = createdOffering.id;
 
-      // 3. Create campaign
-      const campaignBody: Record<string, unknown> = {
+      await api.createCampaign(tenantId, {
         name: campaign.name.trim(),
         offering_id: offeringId,
         approval_mode: campaign.approval_mode,
+        discovery_override: {
+          sources: campaign.discovery_sources.split(",").map((s) => s.trim()).filter(Boolean),
+        },
         qualification_override: {
-          threshold: campaign.qualification_threshold,
+          score_threshold: campaign.qualification_threshold,
         },
         outreach_override: {
-          channels: splitList(campaign.outreach_channels),
+          channels_enabled: campaign.outreach_channels.split(",").map((s) => s.trim()).filter(Boolean),
           follow_up_count: campaign.follow_up_count,
           follow_up_spacing_days: campaign.follow_up_spacing_days,
         },
-      };
-      await api.createCampaign(tenantId, campaignBody);
+      });
 
-      // 4. Register tenant locally and navigate to its dashboard
       addKnownTenant(tenantId);
       setActiveTenant(tenantId);
       router.push(`/${tenantId}`);

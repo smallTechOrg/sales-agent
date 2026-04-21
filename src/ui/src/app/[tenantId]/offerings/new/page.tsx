@@ -3,24 +3,9 @@
 import { useState, use } from "react";
 import { useRouter } from "next/navigation";
 import { api, ApiError } from "@/lib/api";
-import { OfferingForm, OfferingState } from "@/components/forms/OfferingForm";
+import { OfferingForm, OfferingState, OFFERING_DEFAULTS } from "@/components/forms/OfferingForm";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
-
-const EMPTY: OfferingState = {
-  name: "",
-  value_proposition: "",
-  icp_description: "",
-  target_industries: "",
-  target_roles: "",
-  keywords: "",
-};
-
-function toList(s: string): string[] {
-  return s
-    .split(",")
-    .map((x) => x.trim())
-    .filter(Boolean);
-}
+import { buildOfferingBody, validateOffering } from "@/lib/offering-utils";
 
 export default function NewOfferingPage({
   params,
@@ -29,35 +14,23 @@ export default function NewOfferingPage({
 }) {
   const { tenantId } = use(params);
   const router = useRouter();
-  const [form, setForm] = useState<OfferingState>(EMPTY);
+  const [form, setForm] = useState<OfferingState>(OFFERING_DEFAULTS);
   const [errors, setErrors] = useState<Partial<Record<keyof OfferingState, string>>>({});
   const [saveError, setSaveError] = useState("");
   const [saving, setSaving] = useState(false);
 
-  function validate(): boolean {
-    const e: typeof errors = {};
-    if (!form.name.trim()) e.name = "Required";
-    if (!form.value_proposition.trim()) e.value_proposition = "Required";
-    setErrors(e);
-    return Object.keys(e).length === 0;
-  }
-
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!validate()) return;
+    const errs = validateOffering(form);
+    if (Object.keys(errs).length) {
+      setErrors(errs);
+      return;
+    }
+    setErrors({});
     setSaving(true);
     setSaveError("");
     try {
-      await api.createOffering(tenantId, {
-        name: form.name,
-        value_proposition: form.value_proposition,
-        description: form.icp_description || undefined,
-        icp: {
-          target_industries: toList(form.target_industries),
-          target_roles: toList(form.target_roles),
-          keywords: toList(form.keywords),
-        },
-      });
+      await api.createOffering(tenantId, buildOfferingBody(form));
       router.push(`/${tenantId}`);
     } catch (err) {
       setSaveError(err instanceof ApiError ? err.message : String(err));

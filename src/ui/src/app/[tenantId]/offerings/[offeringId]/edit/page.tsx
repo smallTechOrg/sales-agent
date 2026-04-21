@@ -6,17 +6,7 @@ import { api, ApiError } from "@/lib/api";
 import { OfferingForm, OfferingState } from "@/components/forms/OfferingForm";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { Spinner } from "@/components/ui/Spinner";
-
-function toStr(arr: string[] | null | undefined): string {
-  return arr ? arr.join(", ") : "";
-}
-
-function toList(s: string): string[] {
-  return s
-    .split(",")
-    .map((x) => x.trim())
-    .filter(Boolean);
-}
+import { buildOfferingBody, offeringRowToState, validateOffering } from "@/lib/offering-utils";
 
 export default function EditOfferingPage({
   params,
@@ -34,44 +24,23 @@ export default function EditOfferingPage({
   useEffect(() => {
     api
       .getOffering(tenantId, offeringId)
-      .then((o) => {
-        setForm({
-          name: o.name,
-          value_proposition: o.value_proposition ?? "",
-          icp_description: o.description ?? "",
-          target_industries: toStr((o.icp as Record<string, string[]> | null)?.target_industries),
-          target_roles: toStr((o.icp as Record<string, string[]> | null)?.target_roles),
-          keywords: toStr((o.icp as Record<string, string[]> | null)?.keywords),
-        });
-      })
+      .then((o) => setForm(offeringRowToState(o as unknown as Record<string, unknown>)))
       .catch((e) => setLoadError(e instanceof ApiError ? e.message : String(e)));
   }, [tenantId, offeringId]);
 
-  function validate(): boolean {
-    if (!form) return false;
-    const e: typeof errors = {};
-    if (!form.name.trim()) e.name = "Required";
-    if (!form.value_proposition.trim()) e.value_proposition = "Required";
-    setErrors(e);
-    return Object.keys(e).length === 0;
-  }
-
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!form || !validate()) return;
+    if (!form) return;
+    const errs = validateOffering(form);
+    if (Object.keys(errs).length) {
+      setErrors(errs);
+      return;
+    }
+    setErrors({});
     setSaving(true);
     setSaveError("");
     try {
-      await api.patchOffering(tenantId, offeringId, {
-        name: form.name,
-        value_proposition: form.value_proposition,
-        description: form.icp_description || undefined,
-        icp: {
-          target_industries: toList(form.target_industries),
-          target_roles: toList(form.target_roles),
-          keywords: toList(form.keywords),
-        },
-      });
+      await api.patchOffering(tenantId, offeringId, buildOfferingBody(form));
       router.push(`/${tenantId}`);
     } catch (err) {
       setSaveError(err instanceof ApiError ? err.message : String(err));
