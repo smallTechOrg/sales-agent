@@ -12,21 +12,27 @@ See [`spec/product/01-vision.md`](spec/product/01-vision.md) for the full produc
 # 1. Python 3.12 (pinned in .tool-versions, asdf-friendly)
 python --version  # should print 3.12.x
 
-# 2. Install
+# 2. Create and activate the virtual environment
+# Option A — direnv (recommended, auto-activates on cd):
+direnv allow
+# Option B — manually:
+python -m venv .venv && source .venv/bin/activate
+
+# 3. Install
 pip install -e ".[dev]"
 
-# 3. Configure — copy the example and fill in required values
+# 4. Configure — copy the example and fill in required values
 cp .env.example .env
-# Required: ZER0_DATABASE_URL, ZER0_ANTHROPIC_API_KEY, ZER0_TAVILY_API_KEY,
+# Required: ZER0_DATABASE_URL, ZER0_GEMINI_API_KEY, ZER0_TAVILY_API_KEY,
 #           ZER0_JWT_SECRET, ZER0_CREDENTIAL_ENCRYPTION_KEY
 
-# 4. Run database migrations
+# 5. Run database migrations
 alembic upgrade head
 
-# 5. Start the API server
+# 6. Start the API server
 uvicorn zer0.api:app --reload
 
-# 6. Or run the agent directly via the CLI
+# 7. Or run the agent directly via the CLI
 zer0 campaign run <campaign-id>
 ```
 
@@ -36,22 +42,25 @@ zer0 campaign run <campaign-id>
 
 ```
 sales-agent/
-├── src/zer0/
-│   ├── api/            # FastAPI routers — auth, tenants, offerings, campaigns,
-│   │                   #   leads, approvals, messages, events
-│   ├── cli/            # Click CLI — zer0 version, tenant, campaign, leads, run
-│   ├── config/         # pydantic-settings (Settings) + ConfigResolver
-│   ├── db/             # SQLAlchemy 2.0 ORM models + session factory
-│   ├── domain/         # Pure Python domain models (no ORM, no I/O)
-│   │                   #   config, lead, outreach — the nouns of the business
-│   ├── graph/          # LangGraph StateGraph — state, nodes, edges, agent
-│   ├── llm/            # Anthropic Claude client + prompt loader
-│   ├── observability/  # structlog configuration + write_event() + Slack webhook
-│   ├── prompts/        # Markdown prompt templates with {{ variable }} injection
-│   └── tools/          # Agent tools — discovery, research, qualify, outreach …
-├── tests/
-│   ├── unit/           # per-module unit tests (phases 1–7)
-│   └── integration/    # FastAPI TestClient integration tests (phase 8)
+├── src/
+│   ├── zer0/
+│   │   ├── api/            # FastAPI routers — auth, tenants, offerings, campaigns,
+│   │   │                   #   leads, approvals, messages, events
+│   │   ├── cli/            # Click CLI — zer0 version, tenant, campaign, leads, run
+│   │   ├── config/         # pydantic-settings (Settings) + ConfigResolver
+│   │   ├── db/             # SQLAlchemy 2.0 ORM models + session factory
+│   │   ├── domain/         # Pure Python domain models (no ORM, no I/O)
+│   │   │                   #   config, lead, outreach — the nouns of the business
+│   │   ├── graph/          # LangGraph StateGraph — state, nodes, edges, agent
+│   │   ├── llm/            # Configurable LLM client + prompt loader
+│   │   ├── observability/  # structlog configuration + write_event() + Slack webhook
+│   │   ├── prompts/        # Markdown prompt templates with {{ variable }} injection
+│   │   └── tools/          # Agent tools — discovery, research, qualify, outreach …
+│   ├── tests/
+│   │   ├── unit/           # per-module unit tests (phases 1–7)
+│   │   └── integration/    # FastAPI TestClient integration tests (phase 8)
+│   └── ui/                 # Next.js 15 operator dashboard (React 19, TypeScript, Tailwind 4)
+│       └── src/app/        # App Router — tenants, campaigns, leads, messages, events, approvals
 ├── alembic/            # database migrations
 ├── spec/               # single source of truth — read before any change
 ├── reports/            # AI-agent planning reports
@@ -118,15 +127,40 @@ Full CLI spec: [`spec/product/06-cli.md`](spec/product/06-cli.md)
 
 ---
 
+## Dashboard (UI)
+
+The operator web dashboard lives in `src/ui/` — a Next.js 15 app that talks directly to the FastAPI server. The API must be running before opening the UI.
+
+```bash
+# Install (once)
+cd src/ui && npm install
+
+# Development — runs at http://localhost:3000
+npm run dev
+
+# Production build
+npm run build
+```
+
+If the API is not on `http://localhost:8000`, set `NEXT_PUBLIC_API_URL` in `src/ui/.env.local`:
+
+```
+NEXT_PUBLIC_API_URL=http://localhost:8000
+```
+
+Full UI spec: [`spec/product/11-ui-dashboard.md`](spec/product/11-ui-dashboard.md)
+
+---
+
 ## Tests
 
 ```bash
-pytest                   # run all tests
-pytest tests/unit/       # unit tests only
-pytest tests/integration # integration tests only
+pytest                       # run all tests
+pytest src/tests/unit/       # unit tests only
+pytest src/tests/integration # integration tests only
 ```
 
-77 tests across 8 phases. The test suite follows the phased model in [`spec/engineering/phases.md`](spec/engineering/phases.md) — each phase's tests must pass before the next phase's code is written.
+82 tests across 8 phases. The test suite follows the phased model in [`spec/engineering/phases.md`](spec/engineering/phases.md) — each phase's tests must pass before the next phase's code is written.
 
 ---
 
