@@ -25,6 +25,194 @@ REST API contract for the Zer0 dashboard backend, implemented with FastAPI. This
 
 ---
 
+## API resource map
+
+All routes under `/api/v1`. Every route except `GET /health` and `POST /auth/token` requires a valid JWT.
+
+```mermaid
+flowchart LR
+    root["/api/v1"]
+
+    root --> health["GET /health"]
+    root --> auth["POST /auth/token"]
+
+    root --> tenant["PATCH /tenant\nGET /tenant"]
+
+    root --> offerings["/offerings"]
+    offerings --> off_list["GET"]
+    offerings --> off_create["POST"]
+    offerings --> off_id[" /{id}"]
+    off_id --> off_get["GET"]
+    off_id --> off_patch["PATCH"]
+    off_id --> off_del["DELETE"]
+
+    root --> campaigns["/campaigns"]
+    campaigns --> camp_list["GET"]
+    campaigns --> camp_create["POST"]
+    campaigns --> camp_id["/{id}"]
+    camp_id --> camp_get["GET"]
+    camp_id --> camp_patch["PATCH"]
+    camp_id --> camp_del["DELETE"]
+    camp_id --> camp_trigger["POST /{id}/trigger"]
+
+    root --> leads["/leads"]
+    leads --> lead_list["GET  ?campaign_id="]
+    leads --> lead_id["/{id}"]
+    lead_id --> lead_get["GET"]
+    lead_id --> lead_patch["PATCH"]
+    lead_id --> lead_fu["POST /{id}/trigger-followup"]
+
+    root --> approvals["/approvals"]
+    approvals --> appr_list["GET"]
+    approvals --> appr_qual["POST /leads/{lead_id}/qualify"]
+    approvals --> appr_msg["POST /messages/{message_id}"]
+
+    root --> messages["/messages"]
+    messages --> msg_list["GET"]
+    messages --> msg_id["/{id}  GET"]
+
+    root --> events["/events  GET"]
+
+    style root fill:#1168bd,color:#fff,stroke:#0b4884
+```
+
+---
+
+## Sequence diagrams
+
+### Auth: Google OAuth → Zer0 JWT
+
+```mermaid
+sequenceDiagram
+    participant Browser as Dashboard\n(browser)
+    participant Google  as Google OAuth
+    participant API     as Zer0 API
+
+    Browser  ->> Google  : Redirect to Google consent screen
+    Google  -->> Browser : Authorization code (redirect_uri)
+    Browser  ->> API     : POST /auth/token { code, redirect_uri }
+    API      ->> Google  : Exchange code for access token\n(server-to-server)
+
+    alt Exchange fails (invalid / expired code)
+        Google  -->> API     : 400 error
+        API     -->> Browser : 401 INVALID_CODE
+    else Exchange succeeds
+        Google  -->> API     : Google access token + id_token
+        API      ->> API     : Look up or create tenant row\n(keyed by Google Workspace domain)
+        API      ->> API     : Mint Zer0 JWT { tenant_id, sub, exp: +8h }
+        API     -->> Browser : 200 { access_token, expires_at }
+    end
+
+    Note over Browser,API: All subsequent requests include<br/>Authorization: Bearer &lt;jwt&gt;
+```
+
+---
+
+### Campaign trigger: manual run
+
+```mermaid
+sequenceDiagram
+    participant Op    as Operator
+    participant API   as Zer0 API
+    participant DB    as Postgres
+    participant Sched as Runner
+
+    Op    ->> API   : POST /campaigns/{id}/trigger
+    API   ->> API   : Validate JWT → extract tenant_id
+    API   ->> DB    : SELECT campaign WHERE id=? AND tenant_id=?
+    DB   -->> API   : Campaign row
+
+    alt Campaign not found or belongs to different tenant
+        API -->> Op : 404 NOT_FOUND
+    else A run is already in progress
+        API -->> Op : 409 CONFLICT
+    end
+
+    API   ->> DB    : INSERT run_lock (campaign_id, run_id)
+    API   ->> Sched : run_campaign(campaign_id, tenant_id) [enqueue]
+    API  -->> Op    : 202 { run_id, "Campaign run queued." }
+
+    Note over Sched,DB: Agent graph runs asynchronously.<br/>Operator watches progress via GET /events.
+```
+
+---
+
+### Approve-qualify flow (human approval gate)
+
+```mermaid
+sequenceDiagram
+    participant Agent  as Agent Graph
+    participant DB     as Postgres
+    participant Slack  as Slack
+    participant Op     as Operator
+    participant API    as Zer0 API
+
+    Agent  ->> DB     : UPDATE leads SET stage='qualified' (N leads)
+    Agent  ->> DB     : INSERT events (approval.pending × N)
+    Agent  ->> Slack  : POST webhook — "N leads pending approval\nin campaign X"
+    Agent  ->> DB     : Checkpoint AgentState (graph parks)
+
+    Note over Agent   : Graph is parked.<br/>No outreach fires until operator acts.
+
+    Op     ->> API    : GET /approvals?campaign_id=X&type=qualify
+    API    ->> DB     : SELECT leads WHERE stage='qualified'\nAND approval pending
+    DB    -->> API    : Lead list
+    API   -->> Op     : 200 { items: [...qualified leads with scores...] }
+
+    loop for each lead
+        alt Operator approves
+            Op    ->> API   : POST /approvals/leads/{id}/qualify { "decision": "approve" }
+            API   ->> DB    : UPDATE lead SET stage='approved'\nINSERT event (approval.granted)
+            API  -->> Op    : 200 { decision: "approve" }
+        else Operator rejects
+            Op    ->> API   : POST /approvals/leads/{id}/qualify\n{ "decision": "reject", "reason": "..." }
+            API   ->> DB    : UPDATE lead SET stage='rejected'\nINSERT event (approval.rejected)
+            API  -->> Op    : 200 { decision: "reject" }
+        end
+    end
+
+    Note over Agent   : On next scheduler tick (or manual retrigger),<br/>graph resumes from checkpoint with approved_lead_ids populated.<br/>Outreach fires only for approved leads.
+```
+
+---
+
+### Approve-message flow
+
+```mermaid
+sequenceDiagram
+    participant Agent as Agent Graph
+    participant DB    as Postgres
+    participant Slack as Slack
+    participant Op    as Operator
+    participant API   as Zer0 API
+    participant Send  as Send layer\n(Gmail / WhatsApp)
+
+    Agent  ->> DB    : INSERT messages SET status='pending_approval'
+    Agent  ->> DB    : INSERT event (message.drafted)
+    Agent  ->> Slack : POST webhook — "Draft ready for review:\nlead X, sequence 1"
+    Agent  ->> DB    : Checkpoint (graph parks)
+
+    Op     ->> API   : GET /approvals?type=message
+    API   -->> Op    : 200 { items: [{ message: { body, subject, ... } }] }
+
+    alt Operator approves (optionally edits body)
+        Op    ->> API   : POST /approvals/messages/{id}\n{ "decision": "approve", "body": "<optional edit>" }
+        API   ->> DB    : UPDATE messages SET body=?, status='approved'
+        API   ->> Send  : send_email / send_whatsapp
+        Send -->> API   : sent_at, external_message_id
+        API   ->> DB    : UPDATE messages SET status='sent', sent_at=?, external_message_id=?
+        API   ->> DB    : INSERT event (message.sent)
+        API  -->> Op    : 200 { decision: "approve" }
+    else Operator rejects draft
+        Op    ->> API   : POST /approvals/messages/{id} { "decision": "reject" }
+        API   ->> DB    : UPDATE messages SET status='rejected'
+        API   ->> DB    : INSERT event (message.rejected)
+        API  -->> Op    : 200 { decision: "reject" }
+    end
+```
+
+---
+
 ## Authentication
 
 ### Scheme

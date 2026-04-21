@@ -2,6 +2,87 @@
 
 Status: DRAFT
 
+## System context
+
+Every actor and external system that Zer0 touches at runtime.
+
+```mermaid
+flowchart TB
+    classDef person  fill:#08427b,color:#fff,stroke:#052e56
+    classDef zer0    fill:#1168bd,color:#fff,stroke:#0b4884
+    classDef ext     fill:#555555,color:#fff,stroke:#333333
+
+    Operator(["👤 Operator\n(Sales team)"]):::person
+
+    subgraph Zer0 ["Zer0 Platform"]
+        direction LR
+        App["Application\nFastAPI + LangGraph\n+ APScheduler"]:::zer0
+        DB[("Postgres\ndatabase")]:::zer0
+    end
+
+    Google(["Google Workspace\nOAuth login · Gmail send"]):::ext
+    WhatsApp(["WhatsApp\nBusiness API"]):::ext
+    Slack(["Slack\nWebhooks"]):::ext
+    LinkedIn(["LinkedIn\n(discovery)"]):::ext
+    Tavily(["Tavily / Serper\nWeb search"]):::ext
+    Claude(["Anthropic Claude\nLLM inference"]):::ext
+
+    Operator     -->|"HTTPS — dashboard UI"| App
+    App         <-->|"queries · checkpoints"| DB
+    App          -->|"OAuth2 · Gmail API"| Google
+    App          -->|"HTTPS"| WhatsApp
+    App          -->|"POST webhook"| Slack
+    App          -->|"HTTPS"| LinkedIn
+    App          -->|"HTTPS"| Tavily
+    App          -->|"HTTPS"| Claude
+```
+
+**Boundary notes:**
+- The dashboard frontend (React SPA, out of scope for this spec) communicates with `App` over HTTPS REST.
+- All outbound calls from `App` to external APIs are made using tenant-scoped credentials stored encrypted in Postgres. No credential is shared across tenants.
+- LinkedIn is a discovery-only source in v1. DM outreach (write access) is deferred to v2.
+
+---
+
+## Deployment topology
+
+In v1, the entire application runs as **one Python process** (uvicorn). APScheduler is embedded in the same process. LangGraph runs in-process, invoked by the scheduler or directly by an API handler.
+
+```mermaid
+flowchart LR
+    subgraph proc ["Single uvicorn process"]
+        direction TB
+        Router["FastAPI Router\nauth · tenant · offerings\ncampaigns · leads · approvals\nmessages · events"]
+        Scheduler["APScheduler\ncron + manual triggers"]
+        Runner["runner.run_campaign()\nentry point for all agent runs"]
+        Graph["LangGraph StateGraph\n(compiled once at startup)"]
+        ConfigRes["ConfigResolver\nmerges Campaign → Offering\n→ ResolvedConfig"]
+        Tools["Tools\nlinkedin_search · web_search\ndirectory_search · scrape_page\nfind_contact · enrich_lead\nqualify_lead · detect_language\ndraft_outreach · send_email\nsend_whatsapp · check_replies\npost_slack_event"]
+        Obs["Observability\nstructlog · Slack poster\naudit event writer"]
+        LLMClient["LLM client\nAnthropic SDK wrapper\ntool JSON schemas"]
+        Prompts["Prompts\nmarkdown templates\nloaded at startup"]
+    end
+
+    DB[("Postgres\nall tables +\nLangGraph checkpoints")]
+
+    Router       -- "enqueue"       --> Scheduler
+    Scheduler    -- "run_campaign()"  --> Runner
+    Runner       -- "invoke(state)"   --> Graph
+    Graph        --> ConfigRes
+    Graph        --> Tools
+    Graph        --> Obs
+    Tools        --> LLMClient
+    LLMClient    --> Prompts
+    Tools        --> Obs
+    Router      <-->                   DB
+    Graph       <-->                   DB
+    Obs          -->                   DB
+```
+
+**Scaling note (future):** if campaign volume grows, `Runner` can be moved to a separate worker process with a task queue (Celery/ARQ) between the API and the workers. The interface (`run_campaign(campaign_id, tenant_id)`) does not change.
+
+---
+
 ## Layered src structure
 
 ```
@@ -31,6 +112,48 @@ Status: DRAFT
 | `cli/`           | Click commands — local dev and admin.                                           |
 | `config/`        | pydantic-settings, loaded from `.env`. System-level secrets only.               |
 
+### Module dependency graph
+
+Arrows represent import direction. `domain/` has no dependencies inside `src/` — it is the foundation every other module builds on.
+
+```mermaid
+flowchart TD
+    api["api/\nFastAPI routes"]
+    cli["cli/\nClick commands"]
+    graph["graph/\nStateGraph · nodes · edges · runner"]
+    tools["tools/\none file per tool"]
+    llm["llm/\nmodel client · tool schemas"]
+    memory["memory/\nPostgresSaver checkpointer"]
+    prompts["prompts/\nmarkdown templates"]
+    observability["observability/\nstructlog · Slack · audit writer"]
+    domain["domain/\nPydantic models"]
+    config_mod["config/\npydantic-settings"]
+
+    api           --> graph
+    api           --> domain
+    cli           --> graph
+    graph         --> tools
+    graph         --> llm
+    graph         --> memory
+    graph         --> observability
+    graph         --> domain
+    tools         --> llm
+    tools         --> observability
+    tools         --> domain
+    llm           --> prompts
+    llm           --> config_mod
+    observability --> domain
+    config_mod    --> domain
+
+    style domain     fill:#1168bd,color:#fff,stroke:#0b4884
+    style config_mod fill:#444444,color:#fff,stroke:#222222
+```
+
+**Key constraints:**
+- `domain/` imports nothing from this repo.
+- `tools/` does not import from `graph/` — tools are called by nodes, not the reverse.
+- `api/` does not import from `tools/` directly — all tool execution goes through the graph.
+
 ---
 
 ## Configuration resolution
@@ -44,6 +167,34 @@ Campaign override → Offering default → validation error (never a silent syst
 The `ConfigResolver` service is called at the start of every agent tick. It merges `Campaign` overrides onto `Offering` defaults and returns a fully-resolved `ResolvedConfig` model. The agent operates exclusively from `ResolvedConfig` — it never reads `Campaign` or `Offering` fields directly during a run.
 
 This means: change any field in the dashboard → it is picked up on the next tick, with no restart.
+
+### Config resolution sequence
+
+```mermaid
+sequenceDiagram
+    participant Sched  as Scheduler / API handler
+    participant Runner as runner.run_campaign()
+    participant CR     as ConfigResolver
+    participant DB     as Postgres
+    participant Graph  as LangGraph Graph
+
+    Sched  ->> Runner : run_campaign(campaign_id, tenant_id)
+    Runner ->> CR     : resolve(campaign_id, tenant_id)
+    CR     ->> DB     : SELECT campaign + offering\nWHERE id = ? AND tenant_id = ?
+    DB    -->> CR     : Campaign row + Offering row
+
+    CR     ->> CR     : deep_merge(campaign.overrides, offering.defaults)
+
+    alt any required field missing
+        CR    -->> Runner : raise ValidationError → abort run,\nwrite error event
+    else all fields present
+        CR    -->> Runner : ResolvedConfig (immutable for this run)
+    end
+
+    Runner ->> Graph  : invoke(AgentState{ config: resolved_config, ... })
+    Note over Graph   : All nodes read config<br/>exclusively from AgentState.config.<br/>No node ever touches Campaign<br/>or Offering directly.
+    Graph  ->> DB     : checkpoint AgentState after each node
+```
 
 ---
 

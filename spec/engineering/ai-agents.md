@@ -36,6 +36,22 @@ Rule: [`spec/engineering/commits.md`](commits.md)
 - Commit message: ≤70 char subject, imperative mood, body references the spec file that authorises the change.
 - PR body: Summary (2–3 bullets) + Test plan checklist + spec file(s) affected.
 
+### Mandatory commit checkpoints — non-negotiable
+
+An AI agent **must** commit and push at **each** of the following moments. Not at the end of the session. At each checkpoint, with no exceptions:
+
+| Checkpoint | What to do |
+| ---------- | ---------- |
+| After completing any spec change | `git add <spec files> && git commit` immediately. |
+| After completing any code change | `git add <src files> && git commit` immediately. |
+| After completing a task that was in the todo list | Mark the todo completed **and** commit before moving to the next todo. |
+| Before responding to the user after completing work | Verify with `git status` that the working tree is clean. If it is not, commit before replying. |
+| Before the session ends | `git push origin <branch>` — branch must be on the remote. |
+
+**The working tree must be clean before any user-facing reply that describes completed work.** If `git status` shows modified or untracked files that represent completed work, that is a bug in the agent's behaviour — fix it by committing before replying.
+
+This rule exists because leaving uncommitted work in the tree means the work is lost if the session is interrupted, and it misleads the user about the state of the repository.
+
 ---
 
 ## 4. Code style

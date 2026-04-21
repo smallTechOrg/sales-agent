@@ -33,6 +33,178 @@ Postgres native enum types used across tables.
 
 ---
 
+## Entity-relationship diagram
+
+```mermaid
+erDiagram
+    tenants {
+        UUID        id                        PK
+        TEXT        name
+        TEXT        google_oauth_token_enc
+        TEXT        whatsapp_api_key_enc
+        TEXT        slack_webhook_url_enc
+        JSONB       notification_rules
+        INTEGER     retargeting_cooldown_days
+        TEXT        default_approval_mode
+        TIMESTAMPTZ created_at
+        TIMESTAMPTZ updated_at
+        TIMESTAMPTZ deleted_at
+    }
+    offerings {
+        UUID        id                   PK
+        UUID        tenant_id            FK
+        TEXT        name
+        TEXT        description
+        TEXT        value_proposition
+        TEXT_ARRAY  pain_points
+        JSONB       discovery_config
+        JSONB       icp
+        JSONB       qualification_config
+        JSONB       outreach_config
+        TIMESTAMPTZ created_at
+        TIMESTAMPTZ updated_at
+        TIMESTAMPTZ deleted_at
+    }
+    campaigns {
+        UUID        id                      PK
+        UUID        tenant_id               FK
+        UUID        offering_id             FK
+        TEXT        name
+        JSONB       discovery_override
+        JSONB       icp_override
+        JSONB       qualification_override
+        JSONB       outreach_override
+        TEXT        schedule
+        INTEGER     volume_cap
+        TEXT        approval_mode
+        TEXT        status
+        TIMESTAMPTZ created_at
+        TIMESTAMPTZ updated_at
+        TIMESTAMPTZ deleted_at
+    }
+    leads {
+        UUID        id                   PK
+        UUID        tenant_id            FK
+        UUID        campaign_id          FK
+        TEXT        stage
+        TEXT        name
+        TEXT        company
+        TEXT        url
+        TEXT        source
+        JSONB       enriched_data
+        NUMERIC     score
+        JSONB       per_criterion_scores
+        TEXT        rationale
+        TEXT        rejection_reason
+        TEXT        detected_language
+        TIMESTAMPTZ blocked_at
+        TIMESTAMPTZ discovered_at
+        TIMESTAMPTZ created_at
+        TIMESTAMPTZ updated_at
+    }
+    messages {
+        UUID        id                    PK
+        UUID        tenant_id             FK
+        UUID        campaign_id           FK
+        UUID        lead_id               FK
+        TEXT        channel
+        TEXT        subject
+        TEXT        body
+        TEXT        personalisation_notes
+        JSONB       config_snapshot
+        INTEGER     sequence_number
+        TEXT        status
+        TIMESTAMPTZ sent_at
+        TEXT        external_message_id
+        TIMESTAMPTZ created_at
+        TIMESTAMPTZ updated_at
+    }
+    replies {
+        UUID        id           PK
+        UUID        tenant_id    FK
+        UUID        lead_id      FK
+        UUID        message_id   FK
+        TEXT        channel
+        TEXT        content
+        TEXT        sentiment
+        TIMESTAMPTZ received_at
+        TIMESTAMPTZ created_at
+    }
+    events {
+        UUID        id              PK
+        UUID        tenant_id       FK
+        UUID        campaign_id     FK
+        UUID        lead_id         FK
+        TEXT        event_type
+        JSONB       payload
+        JSONB       config_snapshot
+        TIMESTAMPTZ created_at
+    }
+
+    tenants   ||--o{ offerings  : "has"
+    tenants   ||--o{ campaigns  : "owns"
+    tenants   ||--o{ leads      : "scopes"
+    tenants   ||--o{ messages   : "scopes"
+    tenants   ||--o{ replies    : "scopes"
+    tenants   ||--o{ events     : "scopes"
+    offerings ||--o{ campaigns  : "has"
+    campaigns ||--o{ leads      : "discovers"
+    campaigns ||--o{ messages   : "sends"
+    leads     ||--o{ messages   : "receives"
+    leads     ||--o{ replies    : "generates"
+    leads     ||--o{ events     : "logged in"
+    messages  ||--o{ replies    : "threads"
+```
+
+**Key cardinality notes:**
+- `tenant_id` is the first filter in every query; it appears on every table.
+- A `lead` belongs to exactly one `campaign`; if the same prospect is targeted in two campaigns, they have two separate `lead` rows.
+- `events` is append-only (no UPDATE, no DELETE, no soft-delete). Rows accumulate forever.
+- `replies.message_id` is nullable — if a reply cannot be correlated to a specific outbound message (e.g. a cold inbound), it still gets recorded.
+
+---
+
+## Lead lifecycle state machine
+
+```mermaid
+stateDiagram-v2
+    direction LR
+
+    [*]              --> discovered      : discovery tool finds lead
+
+    discovered       --> enriched        : research node completes
+    enriched         --> qualified       : qualify node — score ≥ threshold
+    enriched         --> rejected        : qualify node — score < threshold
+                                           OR disqualifying signal detected
+
+    qualified        --> approved        : full_auto OR approve_messages mode\n(auto-approved by approval_gate)
+    qualified        --> approved        : operator approves\n(approve_qualify OR approve_all)
+    qualified        --> rejected        : operator rejects\n(approve_qualify OR approve_all)
+
+    approved         --> outreach_active : first message sent
+
+    outreach_active  --> outreach_active : follow-up sent\n(spacing elapsed, count remaining)
+    outreach_active  --> responded       : positive reply detected\nOR max follow-ups exhausted
+
+    responded        --> [*]
+    rejected         --> [*]
+
+    discovered       --> blocked         : operator blocks lead
+    enriched         --> blocked         : operator blocks lead
+    qualified        --> blocked         : operator blocks lead
+    outreach_active  --> blocked         : operator blocks lead
+    blocked          --> [*]
+
+    note right of approved
+        approve_messages mode:
+        each message draft also
+        requires operator approval
+        before send.
+    end note
+```
+
+---
+
 ## Tables
 
 ### `tenants`

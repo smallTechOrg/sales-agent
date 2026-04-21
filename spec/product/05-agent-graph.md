@@ -178,6 +178,199 @@ def route_on_error(state: AgentState) -> str:
 
 ---
 
+## Graph topology diagram
+
+Full LangGraph topology. Dashed edges are conditional. `[P]` marks nodes that can park (return to `END`) and be resumed externally.
+
+```mermaid
+flowchart TD
+    START(["▶ START\nrun_campaign()"])
+    RC["resolve_config\nLoad Campaign + Offering\n→ ResolvedConfig"]
+    ERR["handle_error\nWrite error event\nPost Slack alert"]
+    DISC["discover\nlinkedin_search\nweb_search\ndirectory_search\nDeduplicate by URL"]
+    FO1{{"fan_out\nper raw_lead"}}
+    RL["research_lead ×N\nscrape_page\nfind_contact\nenrich_lead\n[parallel]"]
+    FI1{{"fan_in\nmerge enriched_leads"}}
+    FO2{{"fan_out\nper enriched_lead"}}
+    QL["qualify_lead ×N\nqualify_lead tool\n[parallel]"]
+    FI2{{"fan_in\nmerge qualified / rejected"}}
+    AG["approval_gate\ncheck approval_mode"]
+    PARK1(["⏸ PARK\noperator reviews\nqualify list"])
+    OA["outreach\ndetect_language\ndraft_outreach\nper approved lead"]
+    PARK2(["⏸ PARK\noperator reviews\neach draft"])
+    FU["follow_up_loop\ncheck_replies\nsend next follow-up\nif spacing elapsed"]
+    HAND["handoff\nmark responded\npost Slack alert\nstop outreach"]
+    END_N(["⏹ END"])
+
+    START  --> RC
+    RC     -->|"error"| ERR
+    RC     --> DISC
+    DISC   -->|"error"| ERR
+    DISC   --> FO1
+    FO1    --> RL
+    RL     --> FI1
+    FI1    --> FO2
+    FO2    --> QL
+    QL     --> FI2
+    FI2    --> AG
+
+    AG     -->|"full_auto / approve_messages"| OA
+    AG     -->|"approve_qualify / approve_all"| PARK1
+    PARK1  -.->|"API: POST /approvals/leads/*/qualify\nresumes graph"| AG
+
+    OA     -->|"approve_messages / approve_all"| PARK2
+    PARK2  -.->|"API: POST /approvals/messages/*\nresumes graph"| OA
+    OA     -->|"full_auto / approve_qualify"| FU
+
+    FU     -->|"positive reply"| HAND
+    FU     -->|"more follow-ups pending"| FU
+    FU     -->|"all leads done"| END_N
+    HAND   --> END_N
+    ERR    --> END_N
+
+    style PARK1 fill:#f39c12,color:#000,stroke:#e67e22
+    style PARK2 fill:#f39c12,color:#000,stroke:#e67e22
+    style ERR   fill:#e74c3c,color:#fff,stroke:#c0392b
+    style END_N fill:#27ae60,color:#fff,stroke:#1e8449
+    style START fill:#1168bd,color:#fff,stroke:#0b4884
+```
+
+---
+
+## Fan-out / fan-in: per-lead parallelism
+
+Research and qualify run in parallel across leads using LangGraph's `Send` API.
+
+```mermaid
+flowchart LR
+    DISC["discover\n(N raw_leads)"]
+    subgraph par1 ["Parallel — one sub-graph per lead"]
+        direction TB
+        RL1["research_lead\nlead_1"]
+        RL2["research_lead\nlead_2"]
+        RLN["research_lead\nlead_N"]
+    end
+    FI1["fan-in\nstate.enriched_leads = [all results]"]
+
+    subgraph par2 ["Parallel — one sub-graph per enriched lead"]
+        direction TB
+        QL1["qualify_lead\nlead_1"]
+        QL2["qualify_lead\nlead_2"]
+        QLN["qualify_lead\nlead_N"]
+    end
+    FI2["fan-in\nstate.qualified_leads + rejected_leads"]
+
+    DISC --> RL1 & RL2 & RLN --> FI1
+    FI1  --> QL1 & QL2 & QLN --> FI2
+```
+
+Each `research_lead` / `qualify_lead` sub-graph is an independent LangGraph `Send` invocation. They share no mutable state — each returns a partial dict that LangGraph merges via list-append reducers declared on `AgentState`.
+
+---
+
+## End-to-end sequence: happy path (full_auto mode)
+
+```mermaid
+sequenceDiagram
+    participant Sched  as Scheduler
+    participant Runner as runner
+    participant CR     as ConfigResolver
+    participant Graph  as LangGraph
+    participant Tools  as Tools
+    participant LLM    as Claude (LLM)
+    participant DB     as Postgres
+    participant Ext    as External APIs\n(LinkedIn/Tavily/Gmail/WhatsApp)
+    participant Slack  as Slack
+
+    Sched  ->> Runner : run_campaign(campaign_id, tenant_id)
+    Runner ->> CR     : resolve(campaign_id, tenant_id)
+    CR     ->> DB     : SELECT campaign, offering
+    DB    -->> CR     : rows
+    CR    -->> Runner : ResolvedConfig
+
+    Runner ->> Graph  : invoke({ config, campaign_id, tenant_id, run_id })
+
+    rect rgb(230, 240, 255)
+        Note over Graph,Ext: DISCOVER
+        Graph  ->> Tools  : linkedin_search(discovery_config, icp)
+        Tools  ->> Ext    : LinkedIn API
+        Ext   -->> Tools  : raw results
+        Tools  ->> Tools  : deduplicate by URL
+        Tools -->> Graph  : [RawLead ×N]
+        Graph  ->> DB     : write lead.discovered events ×N
+    end
+
+    rect rgb(230, 255, 237)
+        Note over Graph,LLM: RESEARCH (parallel ×N)
+        par per lead
+            Graph ->> Tools : scrape_page(lead.url)
+            Tools ->> Ext   : HTTP GET
+            Ext  -->> Tools : page text
+            Graph ->> Tools : find_contact(url, icp.roles)
+            Tools ->> Ext   : LinkedIn / web search
+            Ext  -->> Tools : contact details
+            Graph ->> Tools : enrich_lead(raw_lead, icp)
+            Tools ->> LLM   : summarise company + role signals
+            LLM  -->> Tools : EnrichedLead
+        end
+        Graph  ->> DB : write lead.enriched events ×N
+        Graph  ->> DB : checkpoint
+    end
+
+    rect rgb(255, 245, 220)
+        Note over Graph,LLM: QUALIFY (parallel ×N)
+        par per enriched lead
+            Graph ->> Tools : qualify_lead(enriched_lead, qualification_config)
+            Tools ->> LLM   : score against rubric criteria
+            LLM  -->> Tools : QualifiedLead | RejectedLead
+        end
+        Graph  ->> DB : write lead.qualified / lead.rejected events
+        Graph  ->> DB : checkpoint
+    end
+
+    rect rgb(245, 230, 255)
+        Note over Graph,Slack: OUTREACH
+        Graph  ->> Tools : detect_language(enriched_lead)
+        Tools  ->> LLM   : infer language from lead profile
+        LLM   -->> Tools : language code
+        Graph  ->> Tools : draft_outreach(qualified_lead, outreach_config)
+        Tools  ->> LLM   : generate personalised message
+        LLM   -->> Tools : OutreachDraft
+        Graph  ->> Tools : send_email / send_whatsapp
+        Tools  ->> Ext   : Gmail API / WhatsApp API
+        Ext   -->> Tools : sent_at, external_message_id
+        Graph  ->> DB    : write message.sent event + config_snapshot
+        Graph  ->> Slack : lead.outreach_started notification
+        Graph  ->> DB    : checkpoint
+    end
+
+    rect rgb(255, 230, 230)
+        Note over Graph,Slack: FOLLOW-UP LOOP
+        loop until reply or max follow-ups
+            Graph  ->> Tools : check_replies(campaign, outreach_config)
+            Tools  ->> Ext   : Poll Gmail / WhatsApp
+            Ext   -->> Tools : [Reply]
+            Tools  ->> LLM   : classify sentiment
+            LLM   -->> Tools : positive | neutral | negative
+            alt positive reply
+                Graph  ->> DB    : UPDATE lead stage='responded'
+                Graph  ->> DB    : write reply.received, handoff.triggered events
+                Graph  ->> Slack : handoff notification
+            else no reply and follow-ups remaining
+                Graph  ->> Tools : draft_outreach (follow-up template)
+                Tools  ->> LLM   : generate follow-up
+                Graph  ->> Tools : send_email / send_whatsapp
+                Graph  ->> DB    : write message.sent event
+            end
+        end
+    end
+
+    Graph -->> Runner : AgentState (completed)
+    Runner ->> DB     : release run_lock
+```
+
+---
+
 ## Parallelism
 
 The `research` and `qualify` nodes process leads independently. LangGraph's `Send` API is used to fan out per-lead work and fan back in:
