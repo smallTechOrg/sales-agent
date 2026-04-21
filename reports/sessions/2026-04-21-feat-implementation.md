@@ -19,10 +19,17 @@
 - **Spec:** spec/engineering/ai-agents.md — §1b (new)
 - **Result:** success
 
+### [17:50] Expand OfferingForm to collect all required config fields
+- **What:** OfferingForm previously had no `discovery_config`, incomplete ICP (missing `company_size_range`, `geography`, `negative_keywords`), and no `qualification_config` or `outreach_config`. Added all required sections. Extracted shared `buildOfferingBody`/`validateOffering`/`offeringRowToState` into `offering-utils.ts`. Fixed wizard wrong field names (`threshold`→`score_threshold`, `channels`→`channels_enabled`).
+- **Files:** [src/ui/src/components/forms/OfferingForm.tsx](../../src/ui/src/components/forms/OfferingForm.tsx), [src/ui/src/lib/offering-utils.ts](../../src/ui/src/lib/offering-utils.ts), [src/ui/src/app/tenants/new/page.tsx](../../src/ui/src/app/tenants/new/page.tsx), [src/ui/src/app/[tenantId]/offerings/new/page.tsx](../../src/ui/src/app/%5BtenantId%5D/offerings/new/page.tsx), [src/ui/src/app/[tenantId]/offerings/[offeringId]/edit/page.tsx](../../src/ui/src/app/%5BtenantId%5D/offerings/%5BofferingId%5D/edit/page.tsx)
+- **Spec:** spec/product/05-config.md — Config resolution
+- **Result:** success
+
 ## Pending / next steps
 
-- [ ] User to reconfigure offering `discovery_config` via UI or API (root cause of the original error — offering was created without required discovery fields)
+- [ ] User must edit the existing offering `b825278a` (or create a new one) via UI to fill in `discovery_config`, complete ICP, qualification, and outreach config — then re-trigger the campaign
+- [ ] Consider: the campaign edit page loads hardcoded defaults for discovery/qualification/outreach instead of reading from the campaign's overrides — follow-up improvement
 
 ## Blockers
 
-- None — the offering's `discovery_config` being empty is a data issue, not a code bug. The improved error message now tells the user exactly which offering to configure.
+- None
