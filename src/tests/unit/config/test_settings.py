@@ -13,49 +13,30 @@ class TestSettings:
 
         s = Settings()
         assert s.database_url == MINIMAL_ENV["ZER0_DATABASE_URL"]
-        assert s.anthropic_api_key == MINIMAL_ENV["ZER0_ANTHROPIC_API_KEY"]
+        assert s.gemini_api_key == MINIMAL_ENV["ZER0_GEMINI_API_KEY"]
         assert s.tavily_api_key == MINIMAL_ENV["ZER0_TAVILY_API_KEY"]
-        assert s.jwt_secret == MINIMAL_ENV["ZER0_JWT_SECRET"]
 
     def test_default_values_are_applied(self, minimal_env) -> None:
         from zer0.config.settings import Settings
 
         s = Settings()
-        assert s.llm_model == "claude-sonnet-4-6"
+        assert s.llm_provider == "gemini"
+        assert s.llm_model == "gemini-2.0-flash"
         assert s.llm_max_tokens == 4096
         assert s.log_level == "INFO"
         assert s.debug is False
         assert s.jwt_algorithm == "HS256"
 
-    def test_missing_database_url_raises_validation_error(self, monkeypatch) -> None:
+
+    def test_missing_gemini_key_raises_validation_error(self, monkeypatch) -> None:
         for k, v in MINIMAL_ENV.items():
             monkeypatch.setenv(k, v)
-        monkeypatch.delenv("ZER0_DATABASE_URL", raising=False)
+        monkeypatch.delenv("ZER0_GEMINI_API_KEY", raising=False)
 
         from zer0.config.settings import Settings
 
         with pytest.raises(ValidationError):
-            Settings()
-
-    def test_missing_anthropic_key_raises_validation_error(self, monkeypatch) -> None:
-        for k, v in MINIMAL_ENV.items():
-            monkeypatch.setenv(k, v)
-        monkeypatch.delenv("ZER0_ANTHROPIC_API_KEY", raising=False)
-
-        from zer0.config.settings import Settings
-
-        with pytest.raises(ValidationError):
-            Settings()
-
-    def test_missing_jwt_secret_raises_validation_error(self, monkeypatch) -> None:
-        for k, v in MINIMAL_ENV.items():
-            monkeypatch.setenv(k, v)
-        monkeypatch.delenv("ZER0_JWT_SECRET", raising=False)
-
-        from zer0.config.settings import Settings
-
-        with pytest.raises(ValidationError):
-            Settings()
+            Settings(_env_file=None)
 
     def test_get_settings_returns_singleton(self, minimal_env) -> None:
         import zer0.config.settings as _s

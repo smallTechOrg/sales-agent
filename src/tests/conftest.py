@@ -13,7 +13,7 @@ _TEST_FERNET_KEY: str = Fernet.generate_key().decode()
 
 MINIMAL_ENV: dict[str, str] = {
     "ZER0_DATABASE_URL": "postgresql://test:test@localhost:5432/testdb",
-    "ZER0_ANTHROPIC_API_KEY": "sk-ant-test-key",
+    "ZER0_GEMINI_API_KEY": "AIza-test-key",
     "ZER0_TAVILY_API_KEY": "tvly-test-key",
     "ZER0_JWT_SECRET": "test-jwt-secret-value",
     "ZER0_CREDENTIAL_ENCRYPTION_KEY": _TEST_FERNET_KEY,
