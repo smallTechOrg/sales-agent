@@ -79,6 +79,19 @@ Before writing a reply that describes work as completed, an AI agent **must** ve
 
 This sweep is not optional when working is described as finished. A reply that says "done" with a dirty tree, unpushed commits, no PR, or a stale README is incorrect regardless of the quality of the code change.
 
+### Integration testing — process hygiene
+
+When an AI agent runs servers (API, UI dev server, workers) as part of verifying a change, it **must**:
+
+1. **Start on a free port.** Before starting any process, confirm the port is free (`lsof -i :<port> | grep LISTEN`). Do not assume a port is free.
+2. **Record every PID or process name** started during the session.
+3. **Stop everything before replying.** After completing the verification, kill every process the agent started — before writing the reply to the user. Use `pkill -f "<process pattern>"` or kill by PID. Confirm the port is clear afterwards.
+4. **Never leave a background server running** in the user's terminal after the agent's turn ends. The user did not ask for a persistent process; they asked for a verified change.
+
+The session-end sweep (above) must include: `lsof -i :<ports used> | grep LISTEN || echo "all clear"` — all ports must show "all clear" before the reply is sent.
+
+Rationale: background processes the user did not knowingly start clutter their environment, consume resources, hold ports, and create confusion when they start their own servers.
+
 ---
 
 ## 4. Code style
