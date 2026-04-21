@@ -36,17 +36,18 @@ Rule: [`spec/engineering/commits.md`](commits.md)
 - Commit message: ≤70 char subject, imperative mood, body references the spec file that authorises the change.
 - PR body: Summary (2–3 bullets) + Test plan checklist + spec file(s) affected.
 
-### Mandatory commit checkpoints — non-negotiable
+### Mandatory commit-and-push checkpoints — non-negotiable
 
-An AI agent **must** commit and push at **each** of the following moments. Not at the end of the session. At each checkpoint, with no exceptions:
+An AI agent **must** commit **and push** at **each** of the following moments. Not at the end of the session. At each checkpoint, with no exceptions:
 
 | Checkpoint | What to do |
 | ---------- | ---------- |
-| After completing any spec change | `git add <spec files> && git commit` immediately. |
-| After completing any code change | `git add <src files> && git commit` immediately. |
-| After completing a task that was in the todo list | Mark the todo completed **and** commit before moving to the next todo. |
-| Before responding to the user after completing work | Verify with `git status` that the working tree is clean. If it is not, commit before replying. |
-| Before the session ends | `git push origin <branch>` — branch must be on the remote. |
+| After completing any spec change | `git add <spec files> && git commit && git push` immediately. |
+| After completing any code change | `git add <src files> && git commit && git push` immediately. |
+| After completing a task that was in the todo list | Mark the todo completed, commit **and push** before moving to the next todo. |
+| Before responding to the user after completing work | Verify with `git status` that the working tree is clean. If it is not, commit and push before replying. |
+
+**Every commit is pushed immediately.** There is no "push at the end" — pushing after every commit means interrupted sessions, browser refreshes, and second agents always see the true state of the branch.
 
 **The working tree must be clean before any user-facing reply that describes completed work.** If `git status` shows modified or untracked files that represent completed work, that is a bug in the agent's behaviour — fix it by committing before replying.
 
@@ -134,3 +135,23 @@ Phase ordering (dependency-first):
 ## 9. Keeping tool files in sync
 
 `CLAUDE.md`, `AGENTS.md`, `.github/copilot-instructions.md`, and `.claude/` are integration shims. They must never contain rules. If you need to add or change a rule, add it here in `spec/engineering/ai-agents.md` (or another `spec/engineering/` file) and update the pointer in the shim if needed. The shims stay lean — they exist only so each tool can find this file.
+
+---
+
+## 10. Keeping README.md current
+
+`README.md` at the repo root is the first thing any reader sees. It must accurately reflect the current state of the product.
+
+**An AI agent must update `README.md` whenever any of the following changes:**
+
+| What changed | What to update in README |
+| ------------ | ------------------------ |
+| Repo layout (new module, removed module) | `## Repo layout` section |
+| CLI commands added, removed, or renamed | `## Commands` section |
+| Quick-start steps changed (new env vars, new install steps) | `## Quick start` section |
+| Agent graph topology changed (nodes, edges) | `## The agent pipeline` section |
+| Product purpose or scope changed | Opening description |
+
+The README is **never** authoritative — all detail lives in `spec/`. The README is a navigational summary that points to `spec/`. It must not duplicate spec content; it must link to it.
+
+If a change lands that makes the README stale and you do not update it in the same commit, that is a spec violation (same class as code/spec drift).
