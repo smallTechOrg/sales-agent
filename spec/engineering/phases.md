@@ -104,7 +104,7 @@ flowchart TD
 
 **Dependencies:** Phase 2 (`config/`).
 
-**Gate:** `pytest tests/unit/llm/` passes. `load_prompt` substitutes all declared variables; raises on undeclared variable. `LLMClient.generate` is tested against a mocked Anthropic SDK response.
+**Gate:** `pytest tests/unit/llm/` passes. `load_prompt` substitutes all declared variables; raises on undeclared variable. `LLMClient.complete` is tested against a mocked configured LLM provider response.
 
 ---
 
@@ -132,7 +132,7 @@ flowchart TD
 **Dependencies:** Phases 1 (`domain/`), 3 (`observability/`), 4 (`llm/`).
 
 **Gate:** `pytest tests/unit/tools/` passes. Every tool has at minimum:
-- One test of the happy path with mocked external I/O (httpx, Anthropic SDK, Gmail).
+- One test of the happy path with mocked external I/O (httpx, configured LLM provider SDK, Gmail).
 - One test of the primary failure mode (API error, parse error).
 
 ---

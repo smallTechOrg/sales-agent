@@ -80,7 +80,7 @@ Checks each configured service.
 ```
 Operator
   Database:       ok
-  LLM (claude):   ok
+  LLM (gemini):   ok
 
 Tenant: acme-corp
   Gmail:         ok
@@ -113,8 +113,9 @@ Prints current `Settings` values. Secret fields are masked (`***`).
 
 ```
 ZER0_DATABASE_URL:              postgresql://zer0:***@localhost/zer0
-ZER0_ANTHROPIC_API_KEY:         ***
-ZER0_LLM_MODEL:                 claude-sonnet-4-6
+ZER0_GEMINI_API_KEY:            ***
+ZER0_LLM_PROVIDER:              gemini
+ZER0_LLM_MODEL:                 gemini-2.0-flash
 ZER0_LLM_MAX_TOKENS:            4096
 ZER0_TAVILY_API_KEY:            ***
 ZER0_CREDENTIAL_ENCRYPTION_KEY: ***

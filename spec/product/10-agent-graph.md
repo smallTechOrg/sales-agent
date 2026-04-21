@@ -277,7 +277,7 @@ sequenceDiagram
     participant CR     as ConfigResolver
     participant Graph  as LangGraph
     participant Tools  as Tools
-    participant LLM    as Claude (LLM)
+    participant LLM    as LLM Provider
     participant DB     as Postgres
     participant Ext    as External APIs\n(LinkedIn/Tavily/Gmail/WhatsApp)
     participant Slack  as Slack

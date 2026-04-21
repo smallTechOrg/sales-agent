@@ -25,7 +25,7 @@ flowchart TB
     Slack(["Slack\nWebhooks"]):::ext
     LinkedIn(["LinkedIn\n(discovery)"]):::ext
     Tavily(["Tavily / Serper\nWeb search"]):::ext
-    Claude(["Anthropic Claude\nLLM inference"]):::ext
+    LLM(["Configurable\nLLM Provider"]):::ext
 
     Operator     -->|"HTTPS — dashboard UI"| App
     App         <-->|"queries · checkpoints"| DB
@@ -34,7 +34,7 @@ flowchart TB
     App          -->|"POST webhook"| Slack
     App          -->|"HTTPS"| LinkedIn
     App          -->|"HTTPS"| Tavily
-    App          -->|"HTTPS"| Claude
+    App          -->|"HTTPS"| LLM
 ```
 
 **Boundary notes:**
@@ -59,7 +59,7 @@ flowchart LR
         ConfigRes["ConfigResolver\nmerges Campaign → Offering\n→ ResolvedConfig"]
         Tools["Tools\nlinkedin_search · web_search\ndirectory_search · scrape_page\nfind_contact · enrich_lead\nqualify_lead · detect_language\ndraft_outreach · send_email\nsend_whatsapp · check_replies\npost_slack_event"]
         Obs["Observability\nstructlog · Slack poster\naudit event writer"]
-        LLMClient["LLM client\nAnthropic SDK wrapper\ntool JSON schemas"]
+        LLMClient["LLM client\nProvider factory\ntool JSON schemas"]
         Prompts["Prompts\nmarkdown templates\nloaded at startup"]
     end
 

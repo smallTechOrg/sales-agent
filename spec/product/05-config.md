@@ -36,12 +36,13 @@ Gitignored. One flat file, `KEY=value`. All vars use the `ZER0_` prefix.
 
 ```dotenv
 ZER0_DATABASE_URL=postgresql://zer0:zer0@localhost:5432/zer0
-ZER0_ANTHROPIC_API_KEY=sk-ant-...
+ZER0_LLM_PROVIDER=gemini
+ZER0_GEMINI_API_KEY=AIza-...
 ZER0_CREDENTIAL_ENCRYPTION_KEY=<base64-urlsafe-32-bytes>
 ZER0_JWT_SECRET=<random-string>
 ZER0_TAVILY_API_KEY=tvly-...
 # optional overrides
-ZER0_LLM_MODEL=claude-sonnet-4-6
+ZER0_LLM_MODEL=gemini-2.0-flash
 ZER0_LLM_MAX_TOKENS=4096
 ```
 
@@ -58,11 +59,11 @@ ZER0_LLM_MAX_TOKENS=4096
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `database_url` | `str` | yes | PostgreSQL DSN |
-| `anthropic_api_key` | `str` | yes | Claude API key |
+| `llm_provider` | `str` | no | Default: `gemini` |
 | `credential_encryption_key` | `str` | yes | Fernet key for tenant secrets |
 | `jwt_secret` | `str` | yes | JWT signing secret |
 | `tavily_api_key` | `str` | yes | Tavily search key |
-| `llm_model` | `str` | no | Default: `claude-sonnet-4-6` |
+| `gemini_api_key` | `str` | yes | Gemini API key |
 | `llm_max_tokens` | `int` | no | Default: `4096` |
 
 ---

@@ -195,7 +195,7 @@ All field-level validation is real-time. The form only submits when the complete
 
 Single screen for operator-level settings. Two sections:
 
-1. **LLM configuration** — model name, max tokens, Anthropic API key (write-only presence field).
+1. **LLM configuration** — provider selection, model name, max tokens, API key (write-only presence field).
 2. **Integration keys** — Tavily API key (write-only presence field), credential encryption key rotation (write-only; rotates the Fernet key and re-encrypts all tenant credentials atomically).
 
 ---
