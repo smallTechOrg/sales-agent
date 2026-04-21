@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     # Server
     log_level: str = Field("INFO")
     debug: bool = Field(False)
+    # Comma-separated origins allowed to call the API from a browser.
+    # In dev: set ZER0_CORS_ORIGINS=http://localhost:3000,http://localhost:3001
+    # In prod (loopback UI): leave empty — the served static files are same-origin.
+    cors_origins: str = Field("", description="Comma-separated allowed CORS origins.")
 
 
 _settings: Settings | None = None
