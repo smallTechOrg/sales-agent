@@ -38,6 +38,24 @@ Invoke via `/` in chat. Each is defined in [`prompts/`](prompts/).
 | `/spec-new-capability` | Scaffold a new capability spec file |
 | `/challenge` | Grill the pending change with hard questions before approval |
 
+## Git workflow
+
+Canonical rules: [`spec/engineering/commits.md`](../spec/engineering/commits.md). Short version:
+
+1. **Commit every logical unit of work.** Don't accumulate. When a task is done, commit it.
+2. **Every commit goes on a feature branch** — never directly to `main`.
+3. **Every feature branch must have an open PR** before the session ends.
+4. **When the change touches behaviour, update the spec first.** Spec and code travel in the same commit. See [`spec/engineering/spec-driven.md`](../spec/engineering/spec-driven.md).
+5. Commit message subject: ≤70 chars, imperative mood. Body explains why; references the spec file that authorises the change.
+6. PR body: Summary (2–3 bullets) + Test plan checklist + spec file(s) affected.
+
+## Don't
+
+- Don't write code before the spec is written or updated.
+- Don't leave changes uncommitted at the end of a session.
+- Don't push directly to `main`.
+- Don't let `CLAUDE.md`, `AGENTS.md`, and `.github/copilot-instructions.md` drift from each other. If you update the git workflow or spec rules in one, update all three.
+
 ## Cross-tool note
 
-This repo is also configured for Claude Code via [`../CLAUDE.md`](../CLAUDE.md) and for OpenAI/Codex agents via [`../AGENTS.md`](../AGENTS.md). Canonical rules are shared — change them in [`spec/engineering/`](../spec/engineering/), never in tool-specific files.
+This repo is also configured for Claude Code via [`../CLAUDE.md`](../CLAUDE.md) and for OpenAI/Codex agents via [`../AGENTS.md`](../AGENTS.md). Canonical rules live in [`spec/engineering/`](../spec/engineering/) — that is the source of truth. The git workflow section above and the Don't list must stay identical across all three files.
