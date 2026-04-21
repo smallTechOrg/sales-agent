@@ -202,7 +202,10 @@ def node_research(state: AgentState) -> dict:
     for lead in state.get("raw_leads", []):
         try:
             page_text = scrape_page(url=lead.url)
-            contact = find_contact(url=lead.url, target_roles=config.icp.target_roles)
+            try:
+                contact = find_contact(company_url=lead.url, target_roles=config.icp.target_roles)
+            except NotImplementedError:
+                contact = None
             el = enrich_lead(
                 raw_lead=lead,
                 icp=config.icp,

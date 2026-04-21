@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import uuid
 
-from duckduckgo_search import DDGS
+from ddgs import DDGS  # type: ignore[import-untyped]
 
 from zer0.domain import DiscoveryConfig, ICP, LeadSource, RawLead
 
