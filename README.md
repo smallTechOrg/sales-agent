@@ -30,7 +30,9 @@ cp .env.example .env
 alembic upgrade head
 
 # 6. Start the API server
-uvicorn zer0.api:app --reload
+# Note: macOS with Xcode installed uses port 8000 (CoreSimulator).
+# Use port 8001 to avoid the conflict.
+uvicorn zer0.api:app --reload --port 8001
 
 # 7. Or run the agent directly via the CLI
 zer0 campaign run <campaign-id>
