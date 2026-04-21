@@ -38,7 +38,7 @@ flowchart TB
 ```
 
 **Boundary notes:**
-- The dashboard frontend (React SPA, out of scope for this spec) communicates with `App` over HTTPS REST.
+- The operator web dashboard (Next.js SPA — see [`11-ui-dashboard.md`](11-ui-dashboard.md)) communicates with `App` over HTTPS REST via the `/api/v1` routes.
 - All outbound calls from `App` to external APIs are made using tenant-scoped credentials stored encrypted in Postgres. No credential is shared across tenants.
 - LinkedIn is a discovery-only source in v1. DM outreach (write access) is deferred to v2.
 

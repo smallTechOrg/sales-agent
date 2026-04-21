@@ -23,6 +23,7 @@ Read in order:
 8. [`product/08-prompts.md`](product/08-prompts.md) — LLM prompt contracts, variable lists, validation
 9. [`product/09-api.md`](product/09-api.md) — REST API contract: endpoints, request/response shapes, auth, error codes
 10. [`product/10-agent-graph.md`](product/10-agent-graph.md) — LangGraph design: state schema, nodes, edges, checkpointing
+11. [`product/11-ui-dashboard.md`](product/11-ui-dashboard.md) — operator web UI: onboarding, pipeline monitoring, approval queue, campaign builder
 
 ## Engineering (`engineering/`)
 

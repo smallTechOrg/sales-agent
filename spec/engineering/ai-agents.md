@@ -127,6 +127,7 @@ Phase ordering (dependency-first):
 | 8 | `api/` | 1, 5, 7 |
 | 9 | `cli/` | 2, 5, 7 |
 | 10 | Integration | all |
+| 11 | `ui/` (Next.js dashboard) | 8 |
 
 ---
 

@@ -33,7 +33,9 @@ flowchart TD
     P7 --> P9
     P8["Phase 8\napi/"] --> P10
     P9["Phase 9\ncli/"] --> P10
-    P10["Phase 10\nIntegration"]
+    P10["Phase 10\nIntegration"] --> P11
+    P8 --> P11
+    P11["Phase 11\nui/"]
 ```
 
 ---
@@ -183,6 +185,28 @@ flowchart TD
 **Dependencies:** All prior phases.
 
 **Gate:** All tests pass (`pytest tests/`). Linter and type-checker clean. Working tree clean.
+
+---
+
+### Phase 11 — `ui/`
+
+**What:** Operator web dashboard — Next.js 15 (static export) served by the FastAPI backend.
+
+**Spec:** [`spec/product/11-ui-dashboard.md`](../product/11-ui-dashboard.md)
+
+**Deliverables:**
+- `ui/` at repo root — Next.js 15 project (TypeScript, Tailwind CSS 4).
+- All screens listed in `11-ui-dashboard.md`: dashboard home, tenant onboarding wizard, lead pipeline, lead detail, approval queue, campaign builder, offering editor, operator settings.
+- `ui/out/` static export bundled into the Python package.
+- `tests/unit/ui/` — component-level tests for every form and state transition (Vitest + React Testing Library).
+
+**Dependencies:** Phase 8 (`api/`) — the UI is a client of the existing REST API. No new Python code in this phase.
+
+**Gate:**
+- `npm test` (Vitest) passes for all UI component tests.
+- `npm run build` produces a clean `ui/out/` export with no TypeScript errors.
+- Every screen in the screen map (`11-ui-dashboard.md`) renders and submits against a mock API server.
+- Secret fields (`type=password`) never appear in component snapshots with pre-filled values.
 
 ---
 
