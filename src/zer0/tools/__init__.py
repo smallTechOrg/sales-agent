@@ -15,6 +15,7 @@ from zer0.tools.qualify_lead import qualify_lead
 from zer0.tools.scrape_page import scrape_page
 from zer0.tools.send_email import send_email
 from zer0.tools.send_whatsapp import send_whatsapp
+from zer0.tools.duckduckgo_search import duckduckgo_search
 from zer0.tools.web_search import web_search
 
 __all__ = [
@@ -22,6 +23,7 @@ __all__ = [
     "detect_language",
     "directory_search",
     "draft_outreach",
+    "duckduckgo_search",
     "enrich_lead",
     "find_contact",
     "linkedin_search",

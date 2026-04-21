@@ -13,9 +13,11 @@ The agent graph enters `node_discover` after `node_resolve_config` succeeds.
 ## Behavior
 
 1. Read `ResolvedConfig.discovery_config.sources` for the current campaign.
-2. For each enabled source, invoke the corresponding tool in parallel:
+2. For each enabled source, invoke the corresponding tool(s):
    - `linkedin_search` — LinkedIn Sales Navigator keyword search.
-   - `web_search` — Tavily web search using ICP criteria.
+   - `web` source — runs **all available web adapters** and aggregates results:
+     - `duckduckgo_search` — always runs (no API key required).
+     - `web_search` (Tavily) — runs if `ZER0_TAVILY_API_KEY` is configured.
    - `directory_search` — Apollo/Crunchbase-style directory lookup.
 3. Deduplicate results by `(company_name, website)` across sources.
 4. Write one `LeadRow` per unique raw lead with `stage = "discovered"`.
@@ -28,7 +30,7 @@ The agent graph enters `node_discover` after `node_resolve_config` succeeds.
 |---|---|
 | `icp` | `ResolvedConfig.icp` |
 | `discovery_config.sources` | `ResolvedConfig.discovery_config` |
-| `tavily_api_key` | `Settings.tavily_api_key` |
+| `tavily_api_key` | `Settings.tavily_api_key` (optional — enables Tavily adapter) |
 | `campaign_id`, `tenant_id` | `AgentState` |
 
 ## Outputs

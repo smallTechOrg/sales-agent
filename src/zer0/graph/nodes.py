@@ -28,6 +28,7 @@ from zer0.tools import (
     detect_language,
     directory_search,
     draft_outreach,
+    duckduckgo_search,
     enrich_lead,
     find_contact,
     linkedin_search,
@@ -95,39 +96,62 @@ def node_discover(state: AgentState) -> dict:
         log.warning("discover.db_dedup_failed", error=str(exc))
 
     raw: list[RawLead] = []
-    source_map = {
-        "linkedin": (linkedin_search, LeadSource.linkedin),
-        "web": (web_search, LeadSource.web),
-        "directory": (directory_search, LeadSource.directory),
-    }
     settings = None
 
-    for source_name in [s.value for s in disc.sources]:
-        entry = source_map.get(source_name)
-        if not entry:
-            continue
-        tool_fn, _ = entry
-        try:
-            kwargs: dict = {
-                "discovery_config": disc,
-                "icp": icp,
-                "tenant_id": tenant_id,
-                "campaign_id": campaign_id,
-            }
-            if tool_fn is web_search:
-                if settings is None:
-                    from zer0.config.settings import get_settings
-                    settings = get_settings()
-                kwargs["tavily_api_key"] = settings.tavily_api_key
-            results = tool_fn(**kwargs)
-        except Exception as exc:
-            log.warning("discover.tool_failed", source=source_name, error=str(exc))
-            results = []
+    base_kwargs: dict = {
+        "discovery_config": disc,
+        "icp": icp,
+        "tenant_id": tenant_id,
+        "campaign_id": campaign_id,
+    }
 
-        for r in results:
-            if r.url not in seen_urls:
-                seen_urls.add(r.url)
-                raw.append(r)
+    # Non-web sources: single adapter per source.
+    non_web_source_map = {
+        "linkedin": linkedin_search,
+        "directory": directory_search,
+    }
+
+    for source_name in [s.value for s in disc.sources]:
+        if source_name == "web":
+            # Web source: run every available adapter and aggregate all results.
+            if settings is None:
+                from zer0.config.settings import get_settings
+                settings = get_settings()
+
+            web_adapters: list[tuple[str, object]] = [
+                ("duckduckgo", duckduckgo_search),
+            ]
+            if settings.tavily_api_key:
+                web_adapters.append(("tavily", web_search))
+
+            for adapter_name, adapter_fn in web_adapters:
+                try:
+                    kwargs: dict = dict(base_kwargs)
+                    if adapter_fn is web_search:
+                        kwargs["tavily_api_key"] = settings.tavily_api_key
+                    results = adapter_fn(**kwargs)  # type: ignore[operator]
+                    log.info("discover.web_adapter_ok", adapter=adapter_name, count=len(results))
+                except Exception as exc:
+                    log.warning("discover.tool_failed", source=f"web/{adapter_name}", error=str(exc))
+                    results = []
+
+                for r in results:
+                    if r.url not in seen_urls:
+                        seen_urls.add(r.url)
+                        raw.append(r)
+
+        elif source_name in non_web_source_map:
+            tool_fn = non_web_source_map[source_name]
+            try:
+                results = tool_fn(**base_kwargs)
+            except Exception as exc:
+                log.warning("discover.tool_failed", source=source_name, error=str(exc))
+                results = []
+
+            for r in results:
+                if r.url not in seen_urls:
+                    seen_urls.add(r.url)
+                    raw.append(r)
 
     raw = raw[: disc.volume_per_run]
 

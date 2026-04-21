@@ -22,7 +22,7 @@
 | Database ORM       | `sqlalchemy>=2.0` (sync, psycopg3)   |
 | Migrations         | `alembic>=1.13`                      |
 | Scheduler          | `apscheduler>=3.10`                  |
-| Search             | `tavily-python>=0.3` (web search)    |
+| Search             | `tavily-python>=0.3` (Tavily web search, optional key), `duckduckgo-search>=6.0` (no key required) |
 
 ## What NOT to use
 
