@@ -75,10 +75,30 @@ Create this file **at the start of the session** (step 5 in §1a). If a report f
 <!-- anything that stopped progress or required a decision -->
 ```
 
+### Prompt log — append every user turn
+
+In addition to "Completed steps" (which record logical actions), the session report **must** contain a **Prompt log** section that records every user prompt and what the agent did in response.
+
+```markdown
+## Prompt log
+
+| # | User prompt (excerpt ≤ 80 chars) | Agent action summary |
+|---|----------------------------------|----------------------|
+| 1 | "implement the plan..."           | Wrote migration + ORM + domain + nodes |
+| 2 | "make it multi-threaded..."       | Added runner_service.py + stats endpoints |
+```
+
+**Rules:**
+- Append a row **immediately after every user prompt** — not at end of session.
+- Prompt excerpt = first 80 chars, or a condensed paraphrase for long blocks.
+- Agent action summary = one sentence describing what was actually done.
+- If the agent did nothing (clarification reply only), write `"replied — no code change"`.
+
 ### Update rules
 
 | Moment | Required update |
 | ------ | --------------- |
+| After every user prompt | Append a row to the Prompt log |
 | After completing any spec change | Add a "Completed steps" entry + update "Pending" |
 | After completing any code change | Add a "Completed steps" entry + update "Pending" |
 | Before every user-facing reply that describes completed work | Verify the report is current; if not, update it first |
@@ -119,10 +139,54 @@ Spec files in `spec/product/` and `spec/engineering/` are **never** treated as b
 1. **Read it in full** with `read_file` before touching any code. Reading "enough of it" is not sufficient.
 2. **Never act on a conversation summary's description of a spec file.** Summaries lose precision. Re-read the actual file.
 3. **Every change to schema, API shape, graph behaviour, or a product concept must land in the spec first, in the same session, before the first code edit.**
+4. **A summarised spec is not a spec.** Any spec content passed through a context window summary, a bullet-point digest, or a paraphrase must be re-read from disk before acting on it.
 
 Failure mode this blocks: an agent reads a partial summary of the data-model spec, writes a migration and ORM model, and the spec never gets updated — leaving the authoritative description out of date with no record of the decision.
 
 The spec is the contract. Code that was written without a spec change is unreviewed by definition — there is no authoritative description of what it is supposed to do.
+
+### Mandatory spec manifest — read these files at session start
+
+At the start of every session, **before** reading any task description or touching any code, an agent **must** call `read_file` on each of the following files in full. This is not optional and is not skipped when a summary is available.
+
+**Product spec**
+
+| File | What it covers |
+| ---- | -------------- |
+| `spec/product/01-vision.md` | What Zer0 is, four-stage loop, success criteria |
+| `spec/product/02-architecture.md` | Layered architecture, domain models, tools, config resolution |
+| `spec/product/03-tenancy.md` | Multi-tenancy model, isolation guarantees |
+| `spec/product/04-capabilities/01-discovery.md` | Discovery capability |
+| `spec/product/04-capabilities/02-enrichment.md` | Enrichment / research capability |
+| `spec/product/04-capabilities/03-qualification.md` | Qualification capability |
+| `spec/product/04-capabilities/04-outreach.md` | Outreach capability |
+| `spec/product/04-capabilities/05-follow-up.md` | Follow-up capability |
+| `spec/product/04-capabilities/06-reply-handling.md` | Reply handling capability |
+| `spec/product/04-capabilities/07-contact-discovery.md` | Contact discovery capability |
+| `spec/product/04-capabilities/08-approval.md` | Approval capability |
+| `spec/product/05-config.md` | Configuration model, resolution order |
+| `spec/product/06-cli.md` | CLI commands |
+| `spec/product/07-data-model.md` | Canonical database schema |
+| `spec/product/08-prompts.md` | Prompt design and variable contracts |
+| `spec/product/09-api.md` | REST API surface |
+| `spec/product/10-agent-graph.md` | LangGraph topology and node contracts |
+| `spec/product/11-ui-dashboard.md` | UI dashboard requirements |
+
+**Engineering rules** (read once per session; re-read if directly modified)
+
+| File | What it covers |
+| ---- | -------------- |
+| `spec/engineering/ai-agents.md` | This file — agent behaviour rules |
+| `spec/engineering/spec-driven.md` | Spec-first development rule |
+| `spec/engineering/secret-hygiene.md` | Secret handling rules |
+| `spec/engineering/tenant-isolation.md` | Tenant isolation enforcement |
+| `spec/engineering/code-style.md` | Python code style |
+| `spec/engineering/commits.md` | Commit and branch rules |
+| `spec/engineering/lessons.md` | Mistakes made in past sessions — read to avoid repeating them |
+
+If a file does not exist yet, note it as missing in the session report and create a draft.
+
+There is **no exception** to this list based on task scope. Even if the task is "fix a typo", the agent must confirm it has read the relevant spec before touching code. For short tasks it is acceptable to confirm from an in-context prior read (same session, not summarised); otherwise re-read from disk.
 
 ---
 

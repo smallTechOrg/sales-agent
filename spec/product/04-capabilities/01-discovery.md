@@ -19,11 +19,12 @@ The agent graph enters `node_discover` after `node_resolve_config` succeeds.
      - `duckduckgo_search` — always runs (no API key required).
      - `web_search` (Tavily) — runs if `ZER0_TAVILY_API_KEY` is configured.
    - `directory_search` — Apollo/Crunchbase-style directory lookup.
-3. Deduplicate results by URL against existing `links` rows for this campaign.
+3. Deduplicate results by URL against existing `links` rows **for this tenant** (`(tenant_id, url)` unique). A URL already seen in any prior campaign for this tenant is not re-inserted.
 4. Trim to `min(len(results), ResolvedConfig.discovery_config.volume_per_run)`.
-5. Write one `LinkRow` per unique new URL. Set `source` to the originating source enum value.
-6. Emit `lead_discovered` event for each link written.
-7. Return the list of `Link` objects to `AgentState.links`.
+5. For each unique new URL: write one `LinkRow` (unique per `(tenant_id, url)`). Set `source`, `campaign_id` (first discoverer). Write a `link_leads` row associating the link with the current campaign.
+6. For a URL already existing (same tenant, different campaign): skip `LinkRow` insert; still write a `link_leads` row for the current campaign so the link participates in this run.
+7. Emit `link.discovered` event for each newly inserted `LinkRow`.
+8. Return the list of `Link` objects to `AgentState.links`.
 
 ## Inputs
 
@@ -39,8 +40,9 @@ The agent graph enters `node_discover` after `node_resolve_config` succeeds.
 | Output | Type |
 |---|---|
 | `AgentState.links` | `list[Link]` |
-| `links` DB rows | `page_text = NULL`, `scraped_at = NULL` |
-| `events` DB rows | `event_type = "lead_discovered"` |
+| `links` DB rows | Upserted on `(tenant_id, url)`. `page_text = NULL`, `scraped_at = NULL` for new rows; re-used as-is for existing rows. |
+| `link_leads` DB rows | One row per `(link_id, campaign_id)` association. |
+| `events` DB rows | `event_type = "link.discovered"` — only for newly inserted `LinkRow`s |
 
 ## Failure modes
 

@@ -19,12 +19,13 @@ from zer0.domain import DiscoveryConfig, ICP
 
 def render_query(template: str, discovery_config: DiscoveryConfig, icp: ICP) -> str:
     size = icp.company_size_range
+    size_str = f"{size.min}-{size.max} employees" if size else ""
     replacements = {
         "{{roles}}": " OR ".join(icp.target_roles),
         "{{industries}}": " OR ".join(icp.target_industries),
         "{{geography}}": " OR ".join(icp.geography),
         "{{keywords}}": " OR ".join(icp.keywords),
-        "{{company_size}}": f"{size.min}-{size.max} employees",
+        "{{company_size}}": size_str,
     }
     query = template
     for placeholder, value in replacements.items():
