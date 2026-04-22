@@ -14,9 +14,9 @@ import structlog
 from datetime import datetime, timezone
 
 from zer0.config.resolver import ConfigResolver
-from zer0.db.models import ContactRow, LeadRow, LinkRow, MessageRow
+from zer0.db.models import ContactRow, CustomerRow, LeadRow, LinkRow, MessageRow
 from zer0.db.session import create_db_session
-from zer0.domain import Contact, Lead, Link
+from zer0.domain import Contact, Customer, Lead, Link
 from zer0.domain.config import ApprovalMode, Channel
 from zer0.domain.lead import LeadStage
 from zer0.domain.link import LinkSource as LinkSourceModel
@@ -248,20 +248,75 @@ def node_identify_leads(state: AgentState) -> dict:
     tenant_id = state["tenant_id"]
     campaign_id = state["campaign_id"]
 
+    # Build set of domains already in DB for this campaign (dedup guard)
+    existing_domains: set[str] = set()
+    try:
+        with create_db_session() as db_check:
+            rows = (
+                db_check.query(LeadRow.domain)
+                .filter(LeadRow.tenant_id == tenant_id, LeadRow.campaign_id == campaign_id, LeadRow.domain.isnot(None))
+                .all()
+            )
+            existing_domains = {r[0] for r in rows}
+    except Exception as exc:
+        log.warning("identify_leads.domain_dedup_failed", error=str(exc))
+
     for lnk in state.get("links", []):
         if not lnk.page_text:
+            continue
+        # Skip links already processed in a previous run
+        if lnk.identified_at is not None:
             continue
         try:
             leads = identify_leads(link=lnk, icp=config.icp, llm=llm, config=config)
             for lead in leads:
+                if lead.domain and lead.domain in existing_domains:
+                    log.info("identify_leads.domain_skip", domain=lead.domain, link_id=lnk.id)
+                    continue
+                if lead.domain:
+                    existing_domains.add(lead.domain)
                 new_leads.append(lead)
                 try:
                     with create_db_session() as session:
+                        # Upsert CustomerRow for this domain (tenant-wide)
+                        customer_id: str | None = None
+                        if lead.domain:
+                            customer_row = (
+                                session.query(CustomerRow)
+                                .filter(CustomerRow.tenant_id == tenant_id, CustomerRow.domain == lead.domain)
+                                .first()
+                            )
+                            if customer_row is None:
+                                customer_row = CustomerRow(
+                                    id=_new_id(),
+                                    tenant_id=tenant_id,
+                                    domain=lead.domain,
+                                    company_name=lead.company_name,
+                                    industry=lead.industry,
+                                    headcount_range=lead.headcount_range,
+                                    business_type=lead.business_type,
+                                    first_seen_at=_now(),
+                                )
+                                session.add(customer_row)
+                            else:
+                                # Fill nulls only — never overwrite existing agent/human data
+                                if customer_row.company_name is None and lead.company_name:
+                                    customer_row.company_name = lead.company_name
+                                if customer_row.industry is None and lead.industry:
+                                    customer_row.industry = lead.industry
+                                if customer_row.headcount_range is None and lead.headcount_range:
+                                    customer_row.headcount_range = lead.headcount_range
+                                if customer_row.business_type is None and lead.business_type:
+                                    customer_row.business_type = lead.business_type
+                            session.flush()
+                            customer_id = customer_row.id
+
                         row = LeadRow(
                             id=lead.id,
                             tenant_id=tenant_id,
                             campaign_id=campaign_id,
                             link_id=lnk.id,
+                            customer_id=customer_id,
                             stage=LeadStage.prospect.value,
                             company_name=lead.company_name,
                             domain=lead.domain,
@@ -270,13 +325,23 @@ def node_identify_leads(state: AgentState) -> dict:
                             business_type=lead.business_type,
                         )
                         session.add(row)
+
+                        # Stamp identified_at on the link
+                        link_row = (
+                            session.query(LinkRow)
+                            .filter(LinkRow.id == lnk.id, LinkRow.tenant_id == tenant_id)
+                            .first()
+                        )
+                        if link_row:
+                            link_row.identified_at = _now()
+
                         write_event(
                             db=session,
                             event_type="lead.identified",
                             tenant_id=tenant_id,
                             campaign_id=campaign_id,
                             lead_id=lead.id,
-                            payload={"company_name": lead.company_name, "link_id": lnk.id},
+                            payload={"company_name": lead.company_name, "link_id": lnk.id, "customer_id": customer_id},
                         )
                 except Exception as exc:
                     log.warning("identify_leads.db_write_failed", lead_id=lead.id, error=str(exc))
@@ -336,6 +401,30 @@ def node_research(state: AgentState) -> dict:
                         row.research_summary = updated.research_summary
                         row.signals = updated.signals
                         row.last_researched_at = updated.last_researched_at
+
+                    # Append research to the tenant-wide CustomerRow
+                    if lead.domain:
+                        customer_row = (
+                            session.query(CustomerRow)
+                            .filter(CustomerRow.tenant_id == lead.tenant_id, CustomerRow.domain == lead.domain)
+                            .first()
+                        )
+                        if customer_row:
+                            # Append summary with separator
+                            if updated.research_summary:
+                                if customer_row.research_summary:
+                                    customer_row.research_summary = (
+                                        customer_row.research_summary + "\n\n---\n" + updated.research_summary
+                                    )
+                                else:
+                                    customer_row.research_summary = updated.research_summary
+                            # Merge signals (deduplicated)
+                            if updated.signals:
+                                existing = set(customer_row.signals or [])
+                                merged = list(existing | set(updated.signals))
+                                customer_row.signals = merged
+                            customer_row.last_enriched_at = _now()
+
                     write_event(
                         db=session,
                         event_type="lead.researched",

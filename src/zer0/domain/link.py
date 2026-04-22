@@ -25,4 +25,5 @@ class Link(BaseModel):
     source: LinkSource
     page_text: str | None = None
     scraped_at: datetime | None = None
+    identified_at: datetime | None = None
     created_at: datetime | None = None

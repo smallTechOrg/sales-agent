@@ -111,23 +111,56 @@ export interface LeadData {
   id: string;
   tenant_id: string;
   campaign_id: string;
+  link_id: string | null;
+  customer_id: string | null;
   stage: string;
-  name: string | null;
-  company: string | null;
-  url: string;
-  source: string;
+  company_name: string | null;
+  domain: string | null;
+  industry: string | null;
+  headcount_range: string | null;
+  business_type: string | null;
+  research_summary: string | null;
+  signals: string[] | null;
   score: number | null;
+  per_criterion_scores: { criterion: string; score: number }[] | null;
   rationale: string | null;
   rejection_reason: string | null;
   detected_language: string | null;
-  contact_email: string | null;
-  contact_role: string | null;
+  blocked_at: string | null;
   created_at: string;
   updated_at: string;
 }
 
 // Alias
 export type Lead = LeadData;
+
+export interface LinkData {
+  id: string;
+  tenant_id: string;
+  campaign_id: string;
+  url: string;
+  source: string;
+  scraped_at: string | null;
+  identified_at: string | null;
+  created_at: string;
+}
+
+export interface CustomerData {
+  id: string;
+  tenant_id: string;
+  domain: string;
+  company_name: string | null;
+  industry: string | null;
+  headcount_range: string | null;
+  business_type: string | null;
+  research_summary: string | null;
+  signals: string[] | null;
+  notes: string | null;
+  first_seen_at: string | null;
+  last_enriched_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
 
 export interface MessageData {
   id: string;
@@ -281,6 +314,24 @@ export const api = {
     patch<LeadData>(`/api/v1/leads/${id}`, tenantId, body),
   triggerFollowUp: (tenantId: string, id: string) =>
     post<unknown>(`/api/v1/leads/${id}/trigger-followup`, tenantId, {}),
+
+  // Links
+  listLinks: (tenantId: string, campaignId: string, cursor?: string) => {
+    const q = new URLSearchParams({ campaign_id: campaignId });
+    if (cursor) q.set("cursor", cursor);
+    return get<ListPage<LinkData>>(`/api/v1/links?${q}`, tenantId);
+  },
+
+  // Customers
+  listCustomers: (tenantId: string, cursor?: string) =>
+    get<ListPage<CustomerData>>(
+      `/api/v1/customers${cursor ? `?cursor=${cursor}` : ""}`,
+      tenantId
+    ),
+  getCustomer: (tenantId: string, id: string) =>
+    get<CustomerData>(`/api/v1/customers/${id}`, tenantId),
+  patchCustomer: (tenantId: string, id: string, body: Partial<CustomerData>) =>
+    patch<CustomerData>(`/api/v1/customers/${id}`, tenantId, body),
 
   // Approvals
   listApprovals: (

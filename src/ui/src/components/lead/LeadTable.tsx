@@ -64,10 +64,10 @@ export function LeadTable({ leads, tenantId }: LeadTableProps) {
         >
           <div className="flex-1 min-w-0">
             <div className="font-semibold text-white truncate">
-              {lead.name ?? lead.company ?? lead.url}
+              {lead.company_name ?? lead.domain ?? lead.id}
             </div>
             <div className="text-xs text-slate-500 truncate">
-              {lead.company ?? lead.url}
+              {lead.domain ?? "—"}
             </div>
           </div>
           <Badge label={lead.stage} />

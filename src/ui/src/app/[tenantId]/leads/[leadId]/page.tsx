@@ -4,6 +4,7 @@ import { useEffect, useState, use } from "react";
 import { api, type Lead, ApiError } from "@/lib/api";
 import { LeadProfile } from "@/components/lead/LeadProfile";
 import { QualificationScores } from "@/components/lead/QualificationScores";
+import { ResearchPanel } from "@/components/lead/ResearchPanel";
 import { LeadMessagesSection } from "@/components/lead/LeadMessagesSection";
 import { LeadEventsSection } from "@/components/lead/LeadEventsSection";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
@@ -36,6 +37,7 @@ export default function LeadDetailPage({
   return (
     <div className="max-w-2xl mx-auto space-y-6">
       <LeadProfile lead={lead} />
+      <ResearchPanel lead={lead} />
       <QualificationScores lead={lead} />
       <LeadMessagesSection tenantId={tenantId} leadId={leadId} />
       <LeadEventsSection tenantId={tenantId} leadId={leadId} />
