@@ -21,7 +21,7 @@ class TestSettings:
 
         s = Settings()
         assert s.llm_provider == "gemini"
-        assert s.llm_model == "gemini-2.0-flash"
+        assert s.llm_model == "gemini-2.5-flash"
         assert s.llm_max_tokens == 4096
         assert s.log_level == "INFO"
         assert s.debug is False

@@ -8,7 +8,8 @@ from zer0.tools.detect_language import detect_language
 from zer0.tools.directory_search import directory_search
 from zer0.tools.draft_outreach import draft_outreach
 from zer0.tools.enrich_lead import enrich_lead
-from zer0.tools.find_contact import find_contact
+from zer0.tools.find_all_contacts import find_all_contacts
+from zer0.tools.identify_leads import identify_leads
 from zer0.tools.linkedin_search import linkedin_search
 from zer0.tools.post_slack_event import post_slack_event
 from zer0.tools.qualify_lead import qualify_lead
@@ -25,7 +26,8 @@ __all__ = [
     "draft_outreach",
     "duckduckgo_search",
     "enrich_lead",
-    "find_contact",
+    "find_all_contacts",
+    "identify_leads",
     "linkedin_search",
     "post_slack_event",
     "qualify_lead",

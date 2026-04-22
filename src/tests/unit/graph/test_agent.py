@@ -14,11 +14,14 @@ class TestAgentGraph:
         expected = {
             "resolve_config",
             "discover",
+            "scrape_links",
+            "identify_leads",
             "research",
             "qualify",
+            "get_contacts",
             "approval_gate",
             "outreach",
-            "follow_up_loop",
+            "check_replies",
             "handle_error",
         }
         assert expected.issubset(set(agent_graph.nodes.keys()))

@@ -4,28 +4,26 @@
 
 ## Purpose
 
-Score each enriched lead against the campaign's ICP rubric and decide whether to accept or reject it.
+Score each researched lead against the campaign's ICP rubric and decide whether to accept or reject it.
 
 ## Trigger
 
-`node_qualify` runs after `node_research`. It calls `qualify_lead` for each `EnrichedLead`.
+`node_qualify` runs after `node_research`. It calls `qualify_lead` for each `Lead` with `stage == "research"`.
 
 ## Behavior
 
-1. For each enriched lead:
+1. For each researched lead:
    a. Load `QualificationConfig.rubric_criteria` — a list of weighted ICP criteria.
-   b. Render `qualifier.md` prompt with lead data + rubric.
+   b. Render `qualifier.md` prompt with `lead.company_name`, `lead.research_summary`, `lead.signals`, and rubric.
    c. Call LLM (`qualify_lead`) to produce per-criterion scores and a final `total_score`.
    d. Compare `total_score` to `QualificationConfig.score_threshold`.
    e. If `total_score >= score_threshold`:
-      - Mark lead `stage = "qualified"`.
-      - Append `QualifiedLead` to `AgentState.qualified_leads`.
+      - Set `lead.stage = "qualification"`; set `lead.score`, `lead.per_criterion_scores`, `lead.rationale`.
       - Emit `lead_qualified` event.
    f. If `total_score < score_threshold`:
-      - Mark lead `stage = "rejected"`.
-      - Append `RejectedLead` with reason to `AgentState.rejected_leads`.
+      - Set `lead.stage = "rejected"`; set `lead.rejection_reason`.
       - Emit `lead_rejected` event.
-2. After all leads processed, if `AgentState.qualified_leads` is empty:
+2. After all leads processed, if no leads have `stage == "qualification"`:
    - Set `AgentState.error = "all_leads_rejected"`.
    - Transition to error handler.
 
@@ -33,7 +31,7 @@ Score each enriched lead against the campaign's ICP rubric and decide whether to
 
 | Key | Source |
 |---|---|
-| `enriched_leads` | `AgentState.enriched_leads` |
+| `leads` (stage == `research`) | `AgentState.leads` |
 | `rubric_criteria` | `ResolvedConfig.qualification_config.rubric_criteria` |
 | `score_threshold` | `ResolvedConfig.qualification_config.score_threshold` |
 | `qualifier.md` prompt | `src/zer0/prompts/qualifier.md` |
@@ -42,9 +40,8 @@ Score each enriched lead against the campaign's ICP rubric and decide whether to
 
 | Output | Type |
 |---|---|
-| `AgentState.qualified_leads` | `list[QualifiedLead]` |
-| `AgentState.rejected_leads` | `list[RejectedLead]` |
-| `leads` DB rows | `stage = "qualified"` or `"rejected"` |
+| `AgentState.leads` | `stage` updated to `"qualification"` or `"rejected"` |
+| `leads` DB rows | `stage`, `score`, `per_criterion_scores`, `rationale`, `rejection_reason` written |
 | `events` DB rows | `lead_qualified` or `lead_rejected` |
 
 ## Failure modes
@@ -57,5 +54,5 @@ Score each enriched lead against the campaign's ICP rubric and decide whether to
 
 ## Out of scope
 
-- Human review of qualification decisions in v1 — approval mode applies to outreach, not qualification.
+- Human review of qualification decisions — approval mode in v1 applies at the contact selection step, not qualification.
 - Feedback loops that adjust rubric weights automatically.

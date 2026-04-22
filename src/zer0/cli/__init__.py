@@ -276,8 +276,8 @@ def campaign_run(campaign_id: str, tenant_id: str) -> None:
         final_state = run_campaign(campaign_id=campaign_id, tenant_id=tenant_id)
         console.print(
             f"[green]Done.[/green] "
-            f"Leads discovered: {len(final_state.get('raw_leads', []))}  "
-            f"qualified: {len(final_state.get('qualified_leads', []))}  "
+            f"Links discovered: {len(final_state.get('links', []))}  "
+            f"leads found: {len(final_state.get('leads', []))}  "
             f"messages sent: {len(final_state.get('sent_messages', []))}"
         )
         if final_state.get("error"):

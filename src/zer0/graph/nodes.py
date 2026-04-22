@@ -3,9 +3,9 @@
 Spec: spec/product/10-agent-graph.md — Nodes
 
 Each node accepts AgentState and returns a partial dict merged back into state.
-DB writes (LeadRow stage updates, EventRow inserts, MessageRow inserts) are
-committed per-node inside create_db_session() so every action is immediately
-visible in the audit trail and UI even if a later node fails.
+DB writes (stage updates, EventRow inserts, MessageRow inserts) are committed
+per-node inside create_db_session() so every action is immediately visible in
+the audit trail and UI even if a later node fails.
 """
 
 from __future__ import annotations
@@ -14,11 +14,12 @@ import structlog
 from datetime import datetime, timezone
 
 from zer0.config.resolver import ConfigResolver
-from zer0.db.models import LeadRow, MessageRow
+from zer0.db.models import ContactRow, LeadRow, LinkRow, MessageRow
 from zer0.db.session import create_db_session
-from zer0.domain import QualifiedLead, RawLead, RejectedLead
+from zer0.domain import Contact, Lead, Link
 from zer0.domain.config import ApprovalMode, Channel
-from zer0.domain.lead import LeadSource
+from zer0.domain.lead import LeadStage
+from zer0.domain.link import LinkSource as LinkSourceModel
 from zer0.domain.outreach import SentMessage
 from zer0.graph.state import AgentState
 from zer0.llm.client import LLMClient
@@ -30,8 +31,8 @@ from zer0.tools import (
     draft_outreach,
     duckduckgo_search,
     enrich_lead,
-    find_contact,
-    linkedin_search,
+    find_all_contacts,
+    identify_leads,
     qualify_lead,
     scrape_page,
     send_email,
@@ -44,6 +45,11 @@ log = structlog.get_logger(__name__)
 
 def _now() -> datetime:
     return datetime.now(tz=timezone.utc)
+
+
+def _new_id() -> str:
+    import uuid
+    return str(uuid.uuid4())
 
 
 # ---------------------------------------------------------------------------
@@ -65,11 +71,11 @@ def node_resolve_config(state: AgentState) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# discover
+# discover  →  writes LinkRow rows
 # ---------------------------------------------------------------------------
 
 def node_discover(state: AgentState) -> dict:
-    """Run discovery tools, deduplicate, persist LeadRow rows and events."""
+    """Run discovery tools and persist raw Link rows (URLs only — no scraping yet)."""
     if state.get("error"):
         return {}
 
@@ -79,23 +85,21 @@ def node_discover(state: AgentState) -> dict:
     campaign_id = state["campaign_id"]
     tenant_id = state["tenant_id"]
 
-    # Dedup against URLs already in state for this invocation
-    seen_urls: set[str] = {lead.url for lead in state.get("raw_leads", [])}
+    seen_urls: set[str] = {lnk.url for lnk in state.get("links", [])}
 
-    # Also dedup against already-persisted leads for this campaign (re-run safety)
     try:
         with create_db_session() as db_check:
             db_urls = {
                 r[0]
-                for r in db_check.query(LeadRow.url)
-                .filter(LeadRow.tenant_id == tenant_id, LeadRow.campaign_id == campaign_id)
+                for r in db_check.query(LinkRow.url)
+                .filter(LinkRow.tenant_id == tenant_id, LinkRow.campaign_id == campaign_id)
                 .all()
             }
         seen_urls.update(db_urls)
     except Exception as exc:
         log.warning("discover.db_dedup_failed", error=str(exc))
 
-    raw: list[RawLead] = []
+    raw_links: list[Link] = []
     settings = None
 
     base_kwargs: dict = {
@@ -105,43 +109,46 @@ def node_discover(state: AgentState) -> dict:
         "campaign_id": campaign_id,
     }
 
-    # Non-web sources: single adapter per source.
     non_web_source_map = {
-        "linkedin": linkedin_search,
-        "directory": directory_search,
+        "linkedin": (directory_search, LinkSourceModel.linkedin),
+        "directory": (directory_search, LinkSourceModel.directory),
     }
 
     for source_name in [s.value for s in disc.sources]:
         if source_name == "web":
-            # Web source: run every available adapter and aggregate all results.
             if settings is None:
                 from zer0.config.settings import get_settings
                 settings = get_settings()
 
-            web_adapters: list[tuple[str, object]] = [
-                ("duckduckgo", duckduckgo_search),
-            ]
+            web_adapters = [("duckduckgo", duckduckgo_search)]
             if settings.tavily_api_key:
                 web_adapters.append(("tavily", web_search))
 
             for adapter_name, adapter_fn in web_adapters:
                 try:
-                    kwargs: dict = dict(base_kwargs)
+                    kwargs = dict(base_kwargs)
                     if adapter_fn is web_search:
                         kwargs["tavily_api_key"] = settings.tavily_api_key
-                    results = adapter_fn(**kwargs)  # type: ignore[operator]
+                    results = adapter_fn(**kwargs)
                     log.info("discover.web_adapter_ok", adapter=adapter_name, count=len(results))
                 except Exception as exc:
                     log.warning("discover.tool_failed", source=f"web/{adapter_name}", error=str(exc))
                     results = []
 
                 for r in results:
-                    if r.url not in seen_urls:
-                        seen_urls.add(r.url)
-                        raw.append(r)
+                    url = getattr(r, "url", None)
+                    if url and url not in seen_urls:
+                        seen_urls.add(url)
+                        raw_links.append(Link(
+                            id=_new_id(),
+                            tenant_id=tenant_id,
+                            campaign_id=campaign_id,
+                            url=url,
+                            source=LinkSourceModel.web,
+                        ))
 
         elif source_name in non_web_source_map:
-            tool_fn = non_web_source_map[source_name]
+            tool_fn, lnk_source = non_web_source_map[source_name]
             try:
                 results = tool_fn(**base_kwargs)
             except Exception as exc:
@@ -149,84 +156,174 @@ def node_discover(state: AgentState) -> dict:
                 results = []
 
             for r in results:
-                if r.url not in seen_urls:
-                    seen_urls.add(r.url)
-                    raw.append(r)
-
-    raw = raw[: disc.volume_per_run]
-
-    # Persist new LeadRow rows and lead.discovered events — one session per node
-    if raw:
-        try:
-            with create_db_session() as session:
-                for lead in raw:
-                    row = LeadRow(
-                        id=lead.id,
+                url = getattr(r, "url", None)
+                if url and url not in seen_urls:
+                    seen_urls.add(url)
+                    raw_links.append(Link(
+                        id=_new_id(),
                         tenant_id=tenant_id,
                         campaign_id=campaign_id,
-                        stage="discovered",
-                        name=lead.name,
-                        company=lead.company,
-                        url=lead.url,
-                        source=lead.source.value,
-                        discovered_at=_now(),
+                        url=url,
+                        source=lnk_source,
+                    ))
+
+    raw_links = raw_links[: disc.volume_per_run]
+
+    if raw_links:
+        try:
+            with create_db_session() as session:
+                for lnk in raw_links:
+                    row = LinkRow(
+                        id=lnk.id,
+                        tenant_id=tenant_id,
+                        campaign_id=campaign_id,
+                        url=lnk.url,
+                        source=lnk.source.value,
                     )
                     session.add(row)
                     write_event(
                         db=session,
-                        event_type="lead.discovered",
+                        event_type="link.discovered",
                         tenant_id=tenant_id,
                         campaign_id=campaign_id,
-                        lead_id=lead.id,
-                        payload={"url": lead.url, "source": lead.source.value},
+                        lead_id=None,
+                        payload={"url": lnk.url, "source": lnk.source.value},
                     )
         except Exception as exc:
             log.warning("discover.db_write_failed", error=str(exc))
 
-    return {"raw_leads": list(state.get("raw_leads", [])) + raw}
+    return {"links": list(state.get("links", [])) + raw_links}
 
 
 # ---------------------------------------------------------------------------
-# research
+# scrape_links  →  fills link.page_text
 # ---------------------------------------------------------------------------
 
-def node_research(state: AgentState) -> dict:
-    """Enrich raw leads; persist stage='enriched' and enriched_data to DB."""
+def node_scrape_links(state: AgentState) -> dict:
+    """Scrape each link and store page_text on the Link and in LinkRow."""
+    if state.get("error"):
+        return {}
+
+    updated: list[Link] = []
+    for lnk in state.get("links", []):
+        if lnk.page_text:
+            updated.append(lnk)
+            continue
+        try:
+            text = scrape_page(url=lnk.url)
+            now = _now()
+            scraped = lnk.model_copy(update={"page_text": text, "scraped_at": now})
+            updated.append(scraped)
+            try:
+                with create_db_session() as session:
+                    row = (
+                        session.query(LinkRow)
+                        .filter(LinkRow.id == lnk.id, LinkRow.tenant_id == lnk.tenant_id)
+                        .first()
+                    )
+                    if row:
+                        row.page_text = text
+                        row.scraped_at = now
+            except Exception as exc:
+                log.warning("scrape_links.db_write_failed", link_id=lnk.id, error=str(exc))
+        except Exception as exc:
+            log.warning("scrape_links.failed", link_id=lnk.id, url=lnk.url, error=str(exc))
+            updated.append(lnk)
+
+    return {"links": updated}
+
+
+# ---------------------------------------------------------------------------
+# identify_leads  →  extracts Lead entities from scraped pages
+# ---------------------------------------------------------------------------
+
+def node_identify_leads(state: AgentState) -> dict:
+    """Use LLM to identify company entities on each scraped page."""
     if state.get("error"):
         return {}
 
     config = state["config"]
     llm = LLMClient()
-    enriched = []
+    new_leads: list[Lead] = []
+    tenant_id = state["tenant_id"]
+    campaign_id = state["campaign_id"]
 
-    for lead in state.get("raw_leads", []):
+    for lnk in state.get("links", []):
+        if not lnk.page_text:
+            continue
         try:
-            page_text = scrape_page(url=lead.url)
-            try:
-                contact = find_contact(company_url=lead.url, target_roles=config.icp.target_roles)
-            except NotImplementedError:
-                contact = None
-            el = enrich_lead(
-                raw_lead=lead,
-                icp=config.icp,
+            leads = identify_leads(link=lnk, icp=config.icp, llm=llm, config=config)
+            for lead in leads:
+                new_leads.append(lead)
+                try:
+                    with create_db_session() as session:
+                        row = LeadRow(
+                            id=lead.id,
+                            tenant_id=tenant_id,
+                            campaign_id=campaign_id,
+                            link_id=lnk.id,
+                            stage=LeadStage.prospect.value,
+                            company_name=lead.company_name,
+                            domain=lead.domain,
+                            industry=lead.industry,
+                            headcount_range=lead.headcount_range,
+                            business_type=lead.business_type,
+                        )
+                        session.add(row)
+                        write_event(
+                            db=session,
+                            event_type="lead.identified",
+                            tenant_id=tenant_id,
+                            campaign_id=campaign_id,
+                            lead_id=lead.id,
+                            payload={"company_name": lead.company_name, "link_id": lnk.id},
+                        )
+                except Exception as exc:
+                    log.warning("identify_leads.db_write_failed", lead_id=lead.id, error=str(exc))
+        except Exception as exc:
+            log.warning("identify_leads.link_failed", link_id=lnk.id, error=str(exc))
+
+    return {"leads": list(state.get("leads", [])) + new_leads}
+
+
+# ---------------------------------------------------------------------------
+# research  →  cumulative enrichment
+# ---------------------------------------------------------------------------
+
+def node_research(state: AgentState) -> dict:
+    """Enrich leads by appending signals/summary from their source page."""
+    if state.get("error"):
+        return {}
+
+    config = state["config"]
+    llm = LLMClient()
+    links_by_id = {lnk.id: lnk for lnk in state.get("links", [])}
+    updated_leads: list[Lead] = []
+
+    for lead in state.get("leads", []):
+        if lead.stage not in (LeadStage.prospect, LeadStage.research):
+            updated_leads.append(lead)
+            continue
+        try:
+            page_text = ""
+            if lead.link_id and lead.link_id in links_by_id:
+                page_text = links_by_id[lead.link_id].page_text or ""
+            elif lead.domain:
+                try:
+                    page_text = scrape_page(url=f"https://{lead.domain}")
+                except Exception:
+                    pass
+
+            enriched = enrich_lead(
+                lead=lead,
                 page_text=page_text,
-                contact_name=contact.name if contact else None,
-                contact_email=contact.email if contact else None,
-                contact_phone=contact.phone if contact else None,
-                contact_role=contact.role if contact else None,
+                icp=config.icp,
                 llm=llm,
                 config=config,
             )
-            enriched.append(el)
+            updated = enriched.model_copy(update={"stage": LeadStage.research})
+            updated_leads.append(updated)
 
-            enriched_data = {
-                "company_summary": el.company_summary,
-                "role_summary": el.role_summary,
-                "recent_signals": el.recent_signals,
-                "contact_email": el.contact_email,
-                "contact_phone": el.contact_phone,
-                "contact_role": el.contact_role,
-            }
             try:
                 with create_db_session() as session:
                     row = (
@@ -235,23 +332,26 @@ def node_research(state: AgentState) -> dict:
                         .first()
                     )
                     if row:
-                        row.stage = "enriched"
-                        row.enriched_data = enriched_data
+                        row.stage = LeadStage.research.value
+                        row.research_summary = updated.research_summary
+                        row.signals = updated.signals
+                        row.last_researched_at = updated.last_researched_at
                     write_event(
                         db=session,
-                        event_type="lead.enriched",
+                        event_type="lead.researched",
                         tenant_id=lead.tenant_id,
                         campaign_id=lead.campaign_id,
                         lead_id=lead.id,
-                        payload={},
+                        payload={"signals_count": len(updated.signals)},
                     )
             except Exception as exc:
                 log.warning("research.db_write_failed", lead_id=lead.id, error=str(exc))
 
         except Exception as exc:
             log.warning("research.lead_failed", lead_id=lead.id, error=str(exc))
+            updated_leads.append(lead)
 
-    return {"enriched_leads": enriched}
+    return {"leads": updated_leads}
 
 
 # ---------------------------------------------------------------------------
@@ -265,10 +365,12 @@ def node_qualify(state: AgentState) -> dict:
 
     config = state["config"]
     llm = LLMClient()
-    qualified = []
-    rejected = []
+    updated_leads: list[Lead] = []
 
-    for lead in state.get("enriched_leads", []):
+    for lead in state.get("leads", []):
+        if lead.stage != LeadStage.research:
+            updated_leads.append(lead)
+            continue
         try:
             result = qualify_lead(
                 lead=lead,
@@ -276,24 +378,10 @@ def node_qualify(state: AgentState) -> dict:
                 llm=llm,
                 config=config,
             )
-            if isinstance(result, QualifiedLead):
-                qualified.append(result)
-                event_type = "lead.qualified"
-                db_updates = {
-                    "stage": "qualified",
-                    "score": result.score,
-                    "per_criterion_scores": [s.model_dump() for s in result.per_criterion_scores],
-                    "rationale": result.rationale,
-                }
-            else:
-                rejected.append(result)
-                event_type = "lead.rejected"
-                db_updates = {
-                    "stage": "rejected",
-                    "score": None,
-                    "per_criterion_scores": [s.model_dump() for s in result.per_criterion_scores],
-                    "rejection_reason": result.rejection_reason,
-                }
+            updated_leads.append(result)
+
+            db_stage = result.stage.value
+            event_type = "lead.qualified" if result.stage == LeadStage.qualification else "lead.rejected"
 
             try:
                 with create_db_session() as session:
@@ -303,86 +391,199 @@ def node_qualify(state: AgentState) -> dict:
                         .first()
                     )
                     if row:
-                        for field, value in db_updates.items():
-                            setattr(row, field, value)
+                        row.stage = db_stage
+                        row.score = result.score
+                        row.per_criterion_scores = [s.model_dump() for s in result.per_criterion_scores]
+                        row.rationale = result.rationale
+                        row.rejection_reason = result.rejection_reason
                     write_event(
                         db=session,
                         event_type=event_type,
                         tenant_id=lead.tenant_id,
                         campaign_id=lead.campaign_id,
                         lead_id=lead.id,
-                        payload={"stage": db_updates["stage"]},
+                        payload={"stage": db_stage, "score": result.score},
                     )
             except Exception as exc:
                 log.warning("qualify.db_write_failed", lead_id=lead.id, error=str(exc))
 
         except Exception as exc:
             log.warning("qualify.lead_failed", lead_id=lead.id, error=str(exc))
+            updated_leads.append(lead)
 
-    return {"qualified_leads": qualified, "rejected_leads": rejected}
+    return {"leads": updated_leads}
 
 
 # ---------------------------------------------------------------------------
-# approval_gate
+# get_contacts
+# ---------------------------------------------------------------------------
+
+def node_get_contacts(state: AgentState) -> dict:
+    """Discover contacts at all qualified leads."""
+    if state.get("error"):
+        return {}
+
+    config = state["config"]
+    new_contacts: list[Contact] = []
+    updated_leads: list[Lead] = []
+
+    for lead in state.get("leads", []):
+        if lead.stage != LeadStage.qualification:
+            updated_leads.append(lead)
+            continue
+        try:
+            contacts = find_all_contacts(
+                lead=lead,
+                target_roles=config.icp.target_roles,
+                config=config,
+            )
+            for contact in contacts:
+                new_contacts.append(contact)
+                try:
+                    with create_db_session() as session:
+                        row = ContactRow(
+                            id=contact.id,
+                            tenant_id=lead.tenant_id,
+                            lead_id=lead.id,
+                            first_name=contact.first_name,
+                            last_name=contact.last_name,
+                            full_name=contact.full_name,
+                            email=contact.email,
+                            phone=contact.phone,
+                            role=contact.role,
+                            linkedin_url=contact.linkedin_url,
+                        )
+                        session.add(row)
+                        write_event(
+                            db=session,
+                            event_type="contact.discovered",
+                            tenant_id=lead.tenant_id,
+                            campaign_id=lead.campaign_id,
+                            lead_id=lead.id,
+                            contact_id=contact.id,
+                            payload={"role": contact.role},
+                        )
+                except Exception as exc:
+                    log.warning("get_contacts.db_write_failed", contact_id=contact.id, error=str(exc))
+
+            updated_lead = lead.model_copy(update={"stage": LeadStage.contacts})
+            updated_leads.append(updated_lead)
+
+            try:
+                with create_db_session() as session:
+                    row = (
+                        session.query(LeadRow)
+                        .filter(LeadRow.id == lead.id, LeadRow.tenant_id == lead.tenant_id)
+                        .first()
+                    )
+                    if row:
+                        row.stage = LeadStage.contacts.value
+                    write_event(
+                        db=session,
+                        event_type="lead.contacts_found",
+                        tenant_id=lead.tenant_id,
+                        campaign_id=lead.campaign_id,
+                        lead_id=lead.id,
+                        payload={"count": len(contacts)},
+                    )
+            except Exception as exc:
+                log.warning("get_contacts.lead_stage_failed", lead_id=lead.id, error=str(exc))
+
+        except Exception as exc:
+            log.warning("get_contacts.lead_failed", lead_id=lead.id, error=str(exc))
+            updated_leads.append(lead)
+
+    return {
+        "leads": updated_leads,
+        "contacts": list(state.get("contacts", [])) + new_contacts,
+    }
+
+
+# ---------------------------------------------------------------------------
+# approval_gate  →  approves contacts for outreach
 # ---------------------------------------------------------------------------
 
 def node_approval_gate(state: AgentState) -> dict:
-    """Route leads to outreach or park for human approval.
+    """Route contacts to outreach or park for human approval.
 
-    Auto modes (full_auto, approve_messages): stage → 'approved' immediately.
-    Human modes (approve_qualify, approve_all): stage stays 'qualified', parks run.
-    Writes approval events and posts Slack notification.
+    Auto modes: contact.approved_for_outreach = True immediately.
+    Human modes: park and notify via Slack.
     """
     if state.get("error"):
         return {}
 
     config = state["config"]
-    qualified = state.get("qualified_leads", [])
+    leads_with_contacts_stage = [l for l in state.get("leads", []) if l.stage == LeadStage.contacts]
+    lead_ids = {l.id for l in leads_with_contacts_stage}
+    contacts = [c for c in state.get("contacts", []) if c.lead_id in lead_ids]
     tenant_id = state["tenant_id"]
     campaign_id = state["campaign_id"]
 
     auto_modes = {ApprovalMode.full_auto, ApprovalMode.approve_messages}
-
-    approved_ids = [l.id for l in qualified]
+    contact_ids = [c.id for c in contacts]
 
     if config.approval_mode in auto_modes:
-        # Auto-approve — set lead stage to 'approved'
-        if approved_ids:
+        approved_contacts: list[Contact] = []
+        if contact_ids:
             try:
                 with create_db_session() as session:
-                    for lead in qualified:
+                    for contact in contacts:
                         row = (
-                            session.query(LeadRow)
-                            .filter(LeadRow.id == lead.id, LeadRow.tenant_id == tenant_id)
+                            session.query(ContactRow)
+                            .filter(ContactRow.id == contact.id, ContactRow.lead_id == contact.lead_id)
                             .first()
                         )
                         if row:
-                            row.stage = "approved"
+                            row.approved_for_outreach = True
                         write_event(
                             db=session,
                             event_type="approval.granted",
                             tenant_id=tenant_id,
                             campaign_id=campaign_id,
-                            lead_id=lead.id,
-                            payload={"auto": True, "score": lead.score},
+                            lead_id=contact.lead_id,
+                            contact_id=contact.id,
+                            payload={"auto": True},
                         )
+                    # Update lead stage to approval
+                    for lead in leads_with_contacts_stage:
+                        lead_row = (
+                            session.query(LeadRow)
+                            .filter(LeadRow.id == lead.id, LeadRow.tenant_id == tenant_id)
+                            .first()
+                        )
+                        if lead_row:
+                            lead_row.stage = LeadStage.approval.value
             except Exception as exc:
                 log.warning("approval_gate.auto_approve_failed", error=str(exc))
-        return {"approved_lead_ids": approved_ids}
+            approved_contacts = [c.model_copy(update={"approved_for_outreach": True}) for c in contacts]
 
-    # Human approval required — park and notify
-    pending_ids = approved_ids  # same list, stage stays 'qualified'
-    if pending_ids:
+        updated_leads = [
+            l.model_copy(update={"stage": LeadStage.approval}) if l.id in lead_ids else l
+            for l in state.get("leads", [])
+        ]
+        all_contacts = [
+            c.model_copy(update={"approved_for_outreach": True}) if c.id in {ac.id for ac in approved_contacts} else c
+            for c in state.get("contacts", [])
+        ]
+        return {
+            "leads": updated_leads,
+            "contacts": all_contacts,
+            "approved_contact_ids": contact_ids,
+        }
+
+    # Human approval required
+    if contact_ids:
         try:
             with create_db_session() as session:
-                for lead in qualified:
+                for contact in contacts:
                     write_event(
                         db=session,
                         event_type="approval.pending",
                         tenant_id=tenant_id,
                         campaign_id=campaign_id,
-                        lead_id=lead.id,
-                        payload={"score": lead.score},
+                        lead_id=contact.lead_id,
+                        contact_id=contact.id,
+                        payload={},
                     )
         except Exception as exc:
             log.warning("approval_gate.pending_event_failed", error=str(exc))
@@ -392,51 +593,49 @@ def node_approval_gate(state: AgentState) -> dict:
                 webhook_url=config.slack_webhook_url,
                 event_type="approval.pending",
                 tenant_id=tenant_id,
-                payload={"pending_count": len(pending_ids), "campaign_id": campaign_id},
+                payload={"pending_count": len(contact_ids), "campaign_id": campaign_id},
             )
 
-    return {"pending_approval_lead_ids": pending_ids, "approved_lead_ids": []}
+    return {"pending_approval_contact_ids": contact_ids, "approved_contact_ids": []}
 
 
 # ---------------------------------------------------------------------------
-# outreach
+# outreach  →  draft and send per approved contact
 # ---------------------------------------------------------------------------
 
 def node_outreach(state: AgentState) -> dict:
-    """Draft and (optionally) send first-touch messages for each approved lead.
-
-    Creates a MessageRow for every draft. Status is 'pending_approval' when
-    operator review is required, otherwise the message is sent immediately and
-    the row is updated to 'sent'. Lead stage is set to 'outreach_active' on send.
-    """
+    """Draft and (optionally) send first-touch messages for each approved contact."""
     if state.get("error"):
         return {}
 
     config = state["config"]
     llm = LLMClient()
-    approved_ids = set(state.get("approved_lead_ids", []))
-    qualified_map = {l.id: l for l in state.get("qualified_leads", [])}
-    enriched_map = {e.id: e for e in state.get("enriched_leads", [])}
+    approved_ids = set(state.get("approved_contact_ids", []))
+    leads_map = {l.id: l for l in state.get("leads", [])}
+    contacts_map = {c.id: c for c in state.get("contacts", [])}
 
     drafts = []
     sent = []
     approval_required = config.approval_mode in {ApprovalMode.approve_messages, ApprovalMode.approve_all}
     channels = config.outreach_config.channels_enabled
 
-    for lead_id in approved_ids:
-        lead = qualified_map.get(lead_id)
+    for contact_id in approved_ids:
+        contact = contacts_map.get(contact_id)
+        if not contact:
+            continue
+        lead = leads_map.get(contact.lead_id)
         if not lead:
             continue
 
         for channel in channels:
             try:
-                enriched = enriched_map.get(lead_id)
-                if enriched:
-                    lang = detect_language(lead=enriched, llm=llm, config=config)
-                    enriched.detected_language = lang
+                lang = detect_language(lead=lead, llm=llm, config=config)
+                if lang and not lead.detected_language:
+                    lead = lead.model_copy(update={"detected_language": lang})
 
                 msg_draft = draft_outreach(
                     lead=lead,
+                    contact=contact,
                     channel=channel,
                     sequence_number=1,
                     llm=llm,
@@ -445,20 +644,20 @@ def node_outreach(state: AgentState) -> dict:
                 drafts.append(msg_draft)
 
                 with create_db_session() as session:
-                    # Persist detected language
                     lead_row = (
                         session.query(LeadRow)
-                        .filter(LeadRow.id == lead_id, LeadRow.tenant_id == lead.tenant_id)
+                        .filter(LeadRow.id == lead.id, LeadRow.tenant_id == lead.tenant_id)
                         .first()
                     )
-                    if lead_row and enriched and enriched.detected_language:
-                        lead_row.detected_language = enriched.detected_language
+                    if lead_row and lang:
+                        lead_row.detected_language = lang
 
                     msg_status = "pending_approval" if approval_required else "drafted"
                     msg_row = MessageRow(
                         tenant_id=lead.tenant_id,
                         campaign_id=lead.campaign_id,
                         lead_id=lead.id,
+                        contact_id=contact.id,
                         channel=channel.value,
                         subject=msg_draft.subject,
                         body=msg_draft.body,
@@ -468,7 +667,7 @@ def node_outreach(state: AgentState) -> dict:
                         status=msg_status,
                     )
                     session.add(msg_row)
-                    session.flush()  # assign row ID before writing events
+                    session.flush()
 
                     write_event(
                         db=session,
@@ -476,6 +675,7 @@ def node_outreach(state: AgentState) -> dict:
                         tenant_id=lead.tenant_id,
                         campaign_id=lead.campaign_id,
                         lead_id=lead.id,
+                        contact_id=contact.id,
                         payload={"channel": channel.value, "sequence": 1, "message_id": msg_row.id},
                     )
 
@@ -486,19 +686,19 @@ def node_outreach(state: AgentState) -> dict:
                             tenant_id=lead.tenant_id,
                             campaign_id=lead.campaign_id,
                             lead_id=lead.id,
+                            contact_id=contact.id,
                             payload={"message_id": msg_row.id},
                         )
-                        continue  # session commits on 'with' exit; go to next channel
+                        continue
 
-                    # Auto-send
-                    sm = _send_message(msg_draft=msg_draft, config=config, lead=lead)
+                    sm = _send_message(msg_draft=msg_draft, config=config, lead=lead, contact=contact)
                     sent.append(sm)
 
                     msg_row.status = "sent"
                     msg_row.sent_at = sm.sent_at
                     msg_row.external_message_id = sm.external_message_id
                     if lead_row:
-                        lead_row.stage = "outreach_active"
+                        lead_row.stage = LeadStage.outreach.value
 
                     write_event(
                         db=session,
@@ -506,13 +706,14 @@ def node_outreach(state: AgentState) -> dict:
                         tenant_id=lead.tenant_id,
                         campaign_id=lead.campaign_id,
                         lead_id=lead.id,
+                        contact_id=contact.id,
                         payload={"channel": channel.value, "sequence": 1},
                     )
 
             except Exception as exc:
                 log.warning(
-                    "outreach.lead_failed",
-                    lead_id=lead_id,
+                    "outreach.contact_failed",
+                    contact_id=contact_id,
                     channel=channel.value if hasattr(channel, "value") else str(channel),
                     error=str(exc),
                 )
@@ -531,7 +732,7 @@ def node_outreach(state: AgentState) -> dict:
     }
 
 
-def _send_message(*, msg_draft, config, lead) -> SentMessage:
+def _send_message(*, msg_draft, config, lead, contact) -> SentMessage:
     """Call the appropriate send tool and return a SentMessage."""
     from zer0.config.settings import get_settings
 
@@ -549,7 +750,7 @@ def _send_message(*, msg_draft, config, lead) -> SentMessage:
     else:
         return send_whatsapp(
             draft=msg_draft,
-            recipient_phone=lead.contact_phone or "",
+            recipient_phone=contact.phone or "",
             encrypted_credentials=(
                 config.whatsapp_api_key_enc.encode() if config.whatsapp_api_key_enc else b""
             ),
@@ -558,16 +759,15 @@ def _send_message(*, msg_draft, config, lead) -> SentMessage:
 
 
 # ---------------------------------------------------------------------------
-# follow_up_loop
+# check_replies  →  handles positive replies, stops sibling contacts, sends follow-ups
 # ---------------------------------------------------------------------------
 
-def node_follow_up_loop(state: AgentState) -> dict:
-    """Check replies and send next follow-ups for active leads.
+def node_check_replies(state: AgentState) -> dict:
+    """Check replies and send follow-ups for active leads.
 
-    Spec: spec/product/10-agent-graph.md — follow_up_loop node
-    - Positive reply → write handoff events, post Slack, stage='responded'
-    - Spacing elapsed + follow-ups remaining → draft and send follow-up
-    - All follow-ups exhausted with no reply → stage='responded', mark completed
+    Positive reply from contact A → stop outreach to all sibling contacts,
+    set lead.stage = first_contact.
+    All follow-ups exhausted with no reply → lead.stage = no_contact.
     """
     if state.get("error"):
         return {}
@@ -580,7 +780,6 @@ def node_follow_up_loop(state: AgentState) -> dict:
     tenant_id = state["tenant_id"]
     campaign_id = state["campaign_id"]
 
-    # --- Check for inbound replies ---
     try:
         from zer0.config.settings import get_settings
 
@@ -606,13 +805,17 @@ def node_follow_up_loop(state: AgentState) -> dict:
             completed.append(lid)
             try:
                 with create_db_session() as session:
+                    # Stop all sibling contacts for this lead
+                    session.query(ContactRow).filter(ContactRow.lead_id == lid).update(
+                        {"outreach_stopped": True}
+                    )
                     lead_row = (
                         session.query(LeadRow)
                         .filter(LeadRow.id == lid, LeadRow.tenant_id == tenant_id)
                         .first()
                     )
                     if lead_row:
-                        lead_row.stage = "responded"
+                        lead_row.stage = LeadStage.first_contact.value
                     write_event(
                         db=session,
                         event_type="handoff.triggered",
@@ -622,7 +825,7 @@ def node_follow_up_loop(state: AgentState) -> dict:
                         payload={"reason": "positive_reply"},
                     )
             except Exception as exc:
-                log.warning("follow_up_loop.handoff_db_failed", lead_id=lid, error=str(exc))
+                log.warning("check_replies.handoff_db_failed", lead_id=lid, error=str(exc))
 
             if config.slack_webhook_url:
                 post_slack_event(
@@ -633,24 +836,29 @@ def node_follow_up_loop(state: AgentState) -> dict:
                 )
 
     except Exception as exc:
-        log.warning("follow_up_loop.check_replies_failed", error=str(exc))
+        log.warning("check_replies.check_failed", error=str(exc))
 
-    # --- Send follow-ups ---
+    # Send follow-ups
     completed_set = set(completed)
     llm = LLMClient()
-    qualified_map = {l.id: l for l in state.get("qualified_leads", [])}
-    max_follow_ups = config.outreach_config.follow_up_count  # follow-up messages after first touch
+    leads_map = {l.id: l for l in state.get("leads", [])}
+    contacts_map = {c.id: c for c in state.get("contacts", [])}
+    max_follow_ups = config.outreach_config.follow_up_count
 
-    # Build map of lead_id → most recent SentMessage
-    last_sent_by_lead: dict[str, SentMessage] = {}
+    last_sent_by_contact: dict[str, SentMessage] = {}
     for m in state.get("sent_messages", []):
-        if (
-            m.lead_id not in last_sent_by_lead
-            or m.sequence_number > last_sent_by_lead[m.lead_id].sequence_number
+        cid = getattr(m, "contact_id", None)
+        if cid and (
+            cid not in last_sent_by_contact
+            or m.sequence_number > last_sent_by_contact[cid].sequence_number
         ):
-            last_sent_by_lead[m.lead_id] = m
+            last_sent_by_contact[cid] = m
 
-    for lead_id, last_msg in last_sent_by_lead.items():
+    for contact_id, last_msg in last_sent_by_contact.items():
+        contact = contacts_map.get(contact_id)
+        if not contact or contact.outreach_stopped:
+            continue
+        lead_id = contact.lead_id
         if lead_id in completed_set:
             continue
         if last_msg.sent_at is None:
@@ -660,8 +868,7 @@ def node_follow_up_loop(state: AgentState) -> dict:
             continue
 
         next_seq = last_msg.sequence_number + 1
-        if next_seq > 1 + max_follow_ups:  # 1 = first touch; 1+N ≥ exhausted
-            # All follow-ups exhausted — mark responded
+        if next_seq > 1 + max_follow_ups:
             completed.append(lead_id)
             completed_set.add(lead_id)
             try:
@@ -672,7 +879,7 @@ def node_follow_up_loop(state: AgentState) -> dict:
                         .first()
                     )
                     if lead_row:
-                        lead_row.stage = "responded"
+                        lead_row.stage = LeadStage.no_contact.value
                     write_event(
                         db=session,
                         event_type="outreach.exhausted",
@@ -682,10 +889,10 @@ def node_follow_up_loop(state: AgentState) -> dict:
                         payload={"follow_up_count": max_follow_ups},
                     )
             except Exception as exc:
-                log.warning("follow_up_loop.exhausted_db_failed", lead_id=lead_id, error=str(exc))
+                log.warning("check_replies.exhausted_db_failed", lead_id=lead_id, error=str(exc))
             continue
 
-        lead = qualified_map.get(lead_id)
+        lead = leads_map.get(lead_id)
         if not lead:
             continue
 
@@ -693,12 +900,13 @@ def node_follow_up_loop(state: AgentState) -> dict:
             try:
                 fu_draft = draft_outreach(
                     lead=lead,
+                    contact=contact,
                     channel=channel,
                     sequence_number=next_seq,
                     llm=llm,
                     config=config,
                 )
-                sm = _send_message(msg_draft=fu_draft, config=config, lead=lead)
+                sm = _send_message(msg_draft=fu_draft, config=config, lead=lead, contact=contact)
                 new_sent.append(sm)
 
                 with create_db_session() as session:
@@ -706,6 +914,7 @@ def node_follow_up_loop(state: AgentState) -> dict:
                         tenant_id=tenant_id,
                         campaign_id=campaign_id,
                         lead_id=lead.id,
+                        contact_id=contact.id,
                         channel=channel.value,
                         body=fu_draft.body,
                         subject=fu_draft.subject,
@@ -723,12 +932,13 @@ def node_follow_up_loop(state: AgentState) -> dict:
                         tenant_id=tenant_id,
                         campaign_id=campaign_id,
                         lead_id=lead.id,
+                        contact_id=contact.id,
                         payload={"channel": channel.value, "sequence": next_seq},
                     )
             except Exception as exc:
                 log.warning(
-                    "follow_up_loop.send_failed",
-                    lead_id=lead_id,
+                    "check_replies.send_failed",
+                    contact_id=contact_id,
                     channel=channel.value if hasattr(channel, "value") else str(channel),
                     error=str(exc),
                 )
@@ -769,5 +979,4 @@ def node_handle_error(state: AgentState) -> dict:
             payload={"error": err},
         )
     return {}
-
 

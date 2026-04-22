@@ -17,15 +17,45 @@ def after_resolve_config(state: AgentState) -> str:
 def after_discover(state: AgentState) -> str:
     if state.get("error"):
         return "handle_error"
-    if not state.get("raw_leads"):
+    if not state.get("links"):
+        return "end"
+    return "scrape_links"
+
+
+def after_scrape_links(state: AgentState) -> str:
+    if state.get("error"):
+        return "handle_error"
+    return "identify_leads"
+
+
+def after_identify_leads(state: AgentState) -> str:
+    if state.get("error"):
+        return "handle_error"
+    if not state.get("leads"):
         return "end"
     return "research"
 
 
-def after_qualify(state: AgentState) -> str:
+def after_research(state: AgentState) -> str:
     if state.get("error"):
         return "handle_error"
-    if not state.get("qualified_leads"):
+    return "qualify"
+
+
+def after_qualify(state: AgentState) -> str:
+    from zer0.domain.lead import LeadStage
+    if state.get("error"):
+        return "handle_error"
+    qualified = [l for l in state.get("leads", []) if l.stage == LeadStage.qualification]
+    if not qualified:
+        return "end"
+    return "get_contacts"
+
+
+def after_get_contacts(state: AgentState) -> str:
+    if state.get("error"):
+        return "handle_error"
+    if not state.get("contacts"):
         return "end"
     return "approval_gate"
 
@@ -33,18 +63,17 @@ def after_qualify(state: AgentState) -> str:
 def after_approval_gate(state: AgentState) -> str:
     if state.get("error"):
         return "handle_error"
-    if state.get("pending_approval_lead_ids"):
-        # Parked — run ends; resumed by API call
+    if state.get("pending_approval_contact_ids"):
         return "end"
-    if not state.get("approved_lead_ids"):
+    if not state.get("approved_contact_ids"):
         return "end"
     return "outreach"
 
 
-def after_follow_up_loop(state: AgentState) -> str:
+def after_check_replies(state: AgentState) -> str:
     sent = state.get("sent_messages", [])
     completed = set(state.get("completed_lead_ids", []))
-    active_ids = {m.lead_id for m in sent if m.lead_id not in completed}
-    if active_ids:
-        return "follow_up_loop"
+    active = [m for m in sent if getattr(m, "lead_id", None) not in completed]
+    if active:
+        return "check_replies"
     return "end"

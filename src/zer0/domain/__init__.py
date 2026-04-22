@@ -16,15 +16,13 @@ from zer0.domain.config import (
     ResolvedConfig,
     RubricCriterion,
 )
+from zer0.domain.contact import Contact
 from zer0.domain.lead import (
-    EnrichedLead,
-    LeadSource,
+    Lead,
     LeadStage,
     PerCriterionScore,
-    QualifiedLead,
-    RawLead,
-    RejectedLead,
 )
+from zer0.domain.link import Link, LinkSource
 from zer0.domain.outreach import (
     MessageStatus,
     OutreachDraft,
@@ -47,13 +45,12 @@ __all__ = [
     "ResolvedConfig",
     "RubricCriterion",
     # lead
-    "EnrichedLead",
-    "LeadSource",
+    "Contact",
+    "Lead",
     "LeadStage",
+    "Link",
+    "LinkSource",
     "PerCriterionScore",
-    "QualifiedLead",
-    "RawLead",
-    "RejectedLead",
     # outreach
     "MessageStatus",
     "OutreachDraft",

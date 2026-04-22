@@ -1,10 +1,10 @@
-# Capability: Lead Discovery
+# Capability: Link Discovery
 
 **Status:** DRAFT
 
 ## Purpose
 
-Discover raw leads that match the ideal customer profile (ICP) for a campaign, using one or more enabled discovery sources.
+Discover raw URLs that match the ideal customer profile (ICP) for a campaign, using one or more enabled discovery sources. Each URL is stored as a `Link` for downstream scraping and lead extraction.
 
 ## Trigger
 
@@ -19,10 +19,11 @@ The agent graph enters `node_discover` after `node_resolve_config` succeeds.
      - `duckduckgo_search` — always runs (no API key required).
      - `web_search` (Tavily) — runs if `ZER0_TAVILY_API_KEY` is configured.
    - `directory_search` — Apollo/Crunchbase-style directory lookup.
-3. Deduplicate results by `(company_name, website)` across sources.
-4. Write one `LeadRow` per unique raw lead with `stage = "discovered"`.
-5. Emit `lead_discovered` event for each lead written.
-6. Return the list of raw leads to `AgentState.raw_leads`.
+3. Deduplicate results by URL against existing `links` rows for this campaign.
+4. Trim to `min(len(results), ResolvedConfig.discovery_config.volume_per_run)`.
+5. Write one `LinkRow` per unique new URL. Set `source` to the originating source enum value.
+6. Emit `lead_discovered` event for each link written.
+7. Return the list of `Link` objects to `AgentState.links`.
 
 ## Inputs
 
@@ -37,8 +38,8 @@ The agent graph enters `node_discover` after `node_resolve_config` succeeds.
 
 | Output | Type |
 |---|---|
-| `AgentState.raw_leads` | `list[RawLead]` |
-| `leads` DB rows | `stage = "discovered"` |
+| `AgentState.links` | `list[Link]` |
+| `links` DB rows | `page_text = NULL`, `scraped_at = NULL` |
 | `events` DB rows | `event_type = "lead_discovered"` |
 
 ## Failure modes
@@ -47,11 +48,12 @@ The agent graph enters `node_discover` after `node_resolve_config` succeeds.
 |---|---|
 | Source API 429 / quota exceeded | Log `discovery_rate_limited`, skip that source, continue with others |
 | Source API auth error | Log `discovery_auth_failed`, skip source |
-| Zero leads found | Set `AgentState.error` with `"no_leads_found"`, transition to error handler |
+| Zero links found | Set `AgentState.error` with `"no_leads_found"`, transition to error handler |
 | Tool raises unhandled exception | Log `discovery_tool_error`, skip source, continue |
 
 ## Out of scope
 
-- Enrichment — raw leads are company names and URLs only; enrichment is a separate capability.
+- Scraping page content — that is the `scrape_links` node (next step).
+- Extracting company entities from pages — that is the `identify_leads` node.
 - Scoring — no ICP scoring happens at discovery time.
 - Pagination across multiple pages of results — v1 returns the first page only.

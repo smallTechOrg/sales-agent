@@ -10,7 +10,7 @@ Falls back to "en" on any error.
 
 from __future__ import annotations
 
-from zer0.domain import EnrichedLead
+from zer0.domain import Lead
 from zer0.domain.config import ResolvedConfig
 from zer0.llm.client import LLMClient
 
@@ -19,13 +19,13 @@ _FALLBACK = "en"
 
 def detect_language(
     *,
-    lead: EnrichedLead,
+    lead: Lead,
     llm: LLMClient,
     config: ResolvedConfig,
 ) -> str:
     """Return ISO 639-1 language code detected from the lead's text data."""
     text = " ".join(
-        filter(None, [lead.company_summary, lead.role_summary, *lead.recent_signals])
+        filter(None, [lead.research_summary, *lead.signals])
     )
     if not text.strip():
         return _FALLBACK

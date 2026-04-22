@@ -30,20 +30,24 @@ A value set at Campaign level overrides the Offering default. A value set at Off
 
 ---
 
-## The four-stage loop
+## The pipeline
 
 ```
-DISCOVER → RESEARCH → QUALIFY → OUTREACH
+DISCOVER → SCRAPE → IDENTIFY LEADS → RESEARCH → QUALIFY → CONTACTS → APPROVAL → OUTREACH
 ```
 
-Every stage is independently configurable per campaign.
+Every stage is independently configurable per campaign. A **Link** is a raw URL produced by discovery; a **Lead** is a company entity extracted from a link and progressed through the pipeline; a **Contact** is an individual person at that company.
 
-| Stage    | What happens | What is configurable |
-| -------- | ------------ | -------------------- |
-| **Discover** | Agent searches for companies and contacts matching the ICP. | Sources (LinkedIn, web search, directories), search queries, geography, volume target per run. |
-| **Research** | Agent enriches each raw lead with company context, decision-maker details, and public signals. | Depth of research, which signals to look for, which data sources to use. |
-| **Qualify** | Agent scores each lead against the ICP rubric. Below-threshold leads are discarded with a reason. | Rubric criteria and weights, score threshold, what counts as a disqualifying signal. |
-| **Outreach** | Agent drafts and sends personalised messages, then follows up until a reply is received. | Channels, tone, language, message templates, follow-up count, follow-up spacing, send schedule. |
+| Stage              | What happens | What is configurable |
+| ------------------ | ------------ | -------------------- |
+| **Discover**       | Agent searches for URLs matching the ICP across enabled sources. | Sources (LinkedIn, web search, directories), search queries, geography, volume target per run. |
+| **Scrape**         | Agent fetches and cleans the full page text for each discovered link. | Scraping timeout, content selectors. |
+| **Identify Leads** | LLM extracts company entities from each page, creating one Lead per identified company. | Extraction prompt, company filters, deduplication rules. |
+| **Research**       | Agent enriches each lead with company context, buying signals, and public data. Cumulative — signals are appended across runs. | Depth of research, which signals to look for, which data sources to use. |
+| **Qualify**        | Agent scores each lead against the ICP rubric. Below-threshold leads are rejected with a reason. | Rubric criteria and weights, score threshold, what counts as a disqualifying signal. |
+| **Contacts**       | Agent finds individual decision-makers at qualified companies. | Target roles, seniority levels, max contacts per lead. |
+| **Approval**       | Operator reviews qualified leads and selects which contacts to reach out to. | Approval mode (auto / qualify gate / message gate / full gate). |
+| **Outreach**       | Agent drafts and sends personalised messages per contact, then follows up until a positive reply is received. Positive reply from one contact stops all other contacts for that lead. | Channels, tone, language, message templates, follow-up count, follow-up spacing, send schedule. |
 
 ---
 

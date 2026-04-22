@@ -56,11 +56,20 @@ flowchart LR
     camp_id --> camp_trigger["POST /{id}/trigger"]
 
     root --> leads["/leads"]
-    leads --> lead_list["GET  ?campaign_id="]
+    leads --> lead_list["GET  ?campaign_id=&stage="]
     leads --> lead_id["/{id}"]
     lead_id --> lead_get["GET"]
     lead_id --> lead_patch["PATCH"]
-    lead_id --> lead_fu["POST /{id}/trigger-followup"]
+    lead_id --> lead_block["POST /{id}/block"]
+
+    root --> contacts["/contacts"]
+    contacts --> cont_list["GET  ?lead_id="]
+    contacts --> cont_id["/{id}"]
+    cont_id --> cont_get["GET"]
+    cont_id --> cont_patch["PATCH"]
+
+    root --> links["/links"]
+    links --> link_list["GET  ?campaign_id="]
 
     root --> approvals["/approvals"]
     approvals --> appr_list["GET"]

@@ -60,6 +60,7 @@ Every screen maps to one or more API endpoints. The underlying DB operations are
 | Offering editor | `POST /api/v1/offerings` / `PUT /api/v1/offerings/{id}` |
 | Approval queue | `GET /api/v1/approvals` |
 | Lead detail | `GET /api/v1/leads/{id}` |
+| Contacts view | `GET /api/v1/contacts?lead_id=...` |
 | Messages view | `GET /api/v1/messages?campaign_id=...` |
 | Events log | `GET /api/v1/events?tenant_id=...` |
 | Operator settings | `GET /PUT /api/v1/settings` (operator-level) |
@@ -136,14 +137,16 @@ The core operational screen per campaign. Shows all leads in their current stage
 
 ```mermaid
 flowchart LR
-    Discovered --> Enriched --> Qualified --> OutreachActive
-    Qualified --> Rejected
-    OutreachActive --> Responded
-    OutreachActive --> Blocked
+    Prospect --> Research --> Qualification
+    Qualification --> Contacts --> Approval --> Outreach
+    Qualification --> Rejected
+    Outreach --> FirstContact
+    Outreach --> NoContact
+    Outreach --> Blocked
 ```
 
 - **Filter bar:** stage, date range, source (LinkedIn / web / directory), score range.
-- **Lead row:** company name, website, stage badge, score (if qualified), last activity timestamp.
+- **Lead row:** company name, domain, stage badge, score (if qualified), last activity timestamp.
 - **Trigger agent run button:** dispatches `POST /api/v1/campaigns/{id}/run` and shows a live progress indicator reading from `GET /api/v1/events?campaign_id=...`.
 
 Clicking a lead row opens the lead detail drawer.
@@ -156,10 +159,12 @@ Shows the full enrichment data, qualification scores, and message history for a 
 
 **Sections:**
 
-- **Profile:** `company_summary`, `role_summary`, `detected_language`, contact details.
-- **Qualification scores:** per-criterion breakdowns + total score + rationale.
-- **Messages:** chronological list of sent/pending messages with channel badge, status, and body preview. Expandable to full body.
-- **Replies:** inbound replies with sentiment badge (`positive` / `neutral` / `negative`).
+- **Profile:** `company_name`, `domain`, `industry`, `headcount_range`, `detected_language`, stage badge, score.
+- **Research:** `research_summary` (cumulative), `signals` (list of buying-intent signals), `last_researched_at`.
+- **Qualification scores:** per-criterion breakdowns + total score + rationale. Only shown when stage ≥ `qualification`.
+- **Contacts:** list of `Contact` rows for this lead. Each contact shows name, role, email, seniority level, `decision_maker_score`, approval status, and `outreach_stopped` flag. Operator can set `approved_for_outreach` per contact from this view. Only shown when stage ≥ `contacts`.
+- **Messages:** chronological list of sent/pending messages with channel badge, status, and body preview. Expandable to full body. Each row shows the contact the message targeted.
+- **Replies:** inbound replies with associated contact and sentiment badge (`positive` / `neutral` / `negative`).
 - **Events:** filtered event log for this lead.
 
 ---
@@ -222,6 +227,7 @@ The UI surfaces data already present in the DB. No new tables.
 | Tenant list + status | `tenants` |
 | Campaign summaries | `campaigns` |
 | Lead pipeline | `leads` |
+| Contacts per lead | `contacts` |
 | Messages + status | `messages` |
 | Replies + sentiment | `replies` |
 | Agent run events | `events` |

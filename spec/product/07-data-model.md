@@ -22,14 +22,17 @@ Canonical reference for every table, column, type, constraint, and index in the 
 
 Postgres native enum types used across tables.
 
-| Enum name        | Values                                                                               |
-| ---------------- | ------------------------------------------------------------------------------------ |
-| `lead_stage`     | `discovered`, `enriched`, `qualified`, `rejected`, `approved`, `outreach_active`, `responded`, `blocked` |
-| `approval_mode`  | `full_auto`, `approve_qualify`, `approve_messages`, `approve_all`                    |
-| `campaign_status`| `active`, `paused`, `archived`                                                       |
-| `channel`        | `email`, `whatsapp`                                                                  |
-| `message_status` | `drafted`, `pending_approval`, `approved`, `rejected`, `sent`                        |
-| `sentiment`      | `positive`, `neutral`, `negative`                                                    |
+| Enum name          | Values                                                                                                                          |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
+| `lead_stage`       | `prospect`, `research`, `qualification`, `contacts`, `approval`, `outreach`, `first_contact`, `no_contact`, `rejected`, `blocked` |
+| `link_source`      | `web`, `linkedin`, `directory`                                                                                                  |
+| `business_type`    | `enterprise`, `mid_market`, `smb`, `clinic`, `service_provider`, `solo`                                                        |
+| `seniority_level`  | `c_level`, `vp`, `director`, `manager`, `ic`, `other`                                                                          |
+| `approval_mode`    | `full_auto`, `approve_qualify`, `approve_messages`, `approve_all`                                                               |
+| `campaign_status`  | `active`, `paused`, `archived`                                                                                                  |
+| `channel`          | `email`, `whatsapp`                                                                                                             |
+| `message_status`   | `drafted`, `pending_approval`, `approved`, `rejected`, `sent`, `stopped`                                                        |
+| `sentiment`        | `positive`, `neutral`, `negative`                                                                                               |
 
 ---
 
@@ -82,23 +85,51 @@ erDiagram
         TIMESTAMPTZ updated_at
         TIMESTAMPTZ deleted_at
     }
+    links {
+        UUID        id            PK
+        UUID        tenant_id     FK
+        UUID        campaign_id   FK
+        TEXT        url
+        TEXT        source
+        TEXT        page_text
+        TIMESTAMPTZ scraped_at
+        TIMESTAMPTZ created_at
+    }
     leads {
         UUID        id                   PK
         UUID        tenant_id            FK
         UUID        campaign_id          FK
+        UUID        link_id              FK
         TEXT        stage
-        TEXT        name
-        TEXT        company
-        TEXT        url
-        TEXT        source
-        JSONB       enriched_data
+        TEXT        company_name
+        TEXT        domain
+        TEXT        industry
+        TEXT        headcount_range
+        TEXT        business_type
+        TEXT        research_summary
+        JSONB       signals
         NUMERIC     score
         JSONB       per_criterion_scores
         TEXT        rationale
         TEXT        rejection_reason
-        TEXT        detected_language
+        TIMESTAMPTZ last_researched_at
         TIMESTAMPTZ blocked_at
-        TIMESTAMPTZ discovered_at
+        TIMESTAMPTZ created_at
+        TIMESTAMPTZ updated_at
+    }
+    contacts {
+        UUID        id                   PK
+        UUID        tenant_id            FK
+        UUID        lead_id              FK
+        TEXT        first_name
+        TEXT        last_name
+        TEXT        email
+        TEXT        phone
+        TEXT        role
+        TEXT        seniority_level
+        NUMERIC     decision_maker_score
+        BOOLEAN     approved_for_outreach
+        BOOLEAN     outreach_stopped
         TIMESTAMPTZ created_at
         TIMESTAMPTZ updated_at
     }
@@ -107,6 +138,7 @@ erDiagram
         UUID        tenant_id             FK
         UUID        campaign_id           FK
         UUID        lead_id               FK
+        UUID        contact_id            FK
         TEXT        channel
         TEXT        subject
         TEXT        body
@@ -123,6 +155,7 @@ erDiagram
         UUID        id           PK
         UUID        tenant_id    FK
         UUID        lead_id      FK
+        UUID        contact_id   FK
         UUID        message_id   FK
         TEXT        channel
         TEXT        content
@@ -141,26 +174,33 @@ erDiagram
         TIMESTAMPTZ created_at
     }
 
-    tenants   ||--o{ offerings  : "has"
-    tenants   ||--o{ campaigns  : "owns"
-    tenants   ||--o{ leads      : "scopes"
-    tenants   ||--o{ messages   : "scopes"
-    tenants   ||--o{ replies    : "scopes"
-    tenants   ||--o{ events     : "scopes"
-    offerings ||--o{ campaigns  : "has"
-    campaigns ||--o{ leads      : "discovers"
-    campaigns ||--o{ messages   : "sends"
-    leads     ||--o{ messages   : "receives"
-    leads     ||--o{ replies    : "generates"
-    leads     ||--o{ events     : "logged in"
-    messages  ||--o{ replies    : "threads"
+    tenants    ||--o{ offerings  : "has"
+    tenants    ||--o{ campaigns  : "owns"
+    tenants    ||--o{ links      : "scopes"
+    tenants    ||--o{ leads      : "scopes"
+    tenants    ||--o{ contacts   : "scopes"
+    tenants    ||--o{ messages   : "scopes"
+    tenants    ||--o{ replies    : "scopes"
+    tenants    ||--o{ events     : "scopes"
+    offerings  ||--o{ campaigns  : "has"
+    campaigns  ||--o{ links      : "discovers"
+    links      ||--o{ leads      : "surfaces"
+    leads      ||--o{ contacts   : "has"
+    leads      ||--o{ messages   : "receives"
+    leads      ||--o{ replies    : "generates"
+    leads      ||--o{ events     : "logged_in"
+    contacts   ||--o{ messages   : "targeted_by"
+    contacts   ||--o{ replies    : "sends"
+    messages   ||--o{ replies    : "threads"
 ```
 
 **Key cardinality notes:**
 - `tenant_id` is the first filter in every query; it appears on every table.
-- A `lead` belongs to exactly one `campaign`; if the same prospect is targeted in two campaigns, they have two separate `lead` rows.
+- A `link` belongs to exactly one campaign; one link page can surface multiple leads (one per identified company).
+- A `lead` belongs to exactly one campaign; if the same company appears in two campaigns they have two `lead` rows.
+- A `contact` belongs to exactly one lead. If the same person appears in two campaigns they have two `contact` rows.
+- `contact_id` on messages and replies is nullable — messages drafted before contact discovery omit it.
 - `events` is append-only (no UPDATE, no DELETE, no soft-delete). Rows accumulate forever.
-- `replies.message_id` is nullable — if a reply cannot be correlated to a specific outbound message (e.g. a cold inbound), it still gets recorded.
 
 ---
 
@@ -170,36 +210,46 @@ erDiagram
 stateDiagram-v2
     direction LR
 
-    [*]              --> discovered      : discovery tool finds lead
+    [*]           --> prospect       : identify_leads node extracts company from link
 
-    discovered       --> enriched        : research node completes
-    enriched         --> qualified       : qualify node — score ≥ threshold
-    enriched         --> rejected        : qualify node — score < threshold
-                                           OR disqualifying signal detected
+    prospect      --> research       : research node enriches company data
+    research      --> research       : subsequent campaign run — signals appended
+    research      --> qualification  : qualify node scores against ICP rubric
+    qualification --> contacts       : score ≥ threshold — get_contacts node runs
+    qualification --> rejected       : score < threshold OR disqualifying signal
 
-    qualified        --> approved        : full_auto OR approve_messages mode\n(auto-approved by approval_gate)
-    qualified        --> approved        : operator approves\n(approve_qualify OR approve_all)
-    qualified        --> rejected        : operator rejects\n(approve_qualify OR approve_all)
+    contacts      --> approval       : contact list ready — approval_gate parks
 
-    approved         --> outreach_active : first message sent
+    approval      --> outreach       : operator approves and selects contacts\nOR full_auto mode
+    approval      --> rejected       : operator rejects lead
 
-    outreach_active  --> outreach_active : follow-up sent\n(spacing elapsed, count remaining)
-    outreach_active  --> responded       : positive reply detected\nOR max follow-ups exhausted
+    outreach      --> outreach       : follow-up sent (spacing elapsed, count remaining)
+    outreach      --> first_contact  : positive reply received from any contact\n→ all other contacts stopped
+    outreach      --> no_contact     : max follow-ups exhausted, no positive reply
 
-    responded        --> [*]
-    rejected         --> [*]
+    first_contact --> [*]
+    no_contact    --> [*]
+    rejected      --> [*]
 
-    discovered       --> blocked         : operator blocks lead
-    enriched         --> blocked         : operator blocks lead
-    qualified        --> blocked         : operator blocks lead
-    outreach_active  --> blocked         : operator blocks lead
-    blocked          --> [*]
+    prospect      --> blocked        : operator blocks lead
+    research      --> blocked        : operator blocks lead
+    qualification --> blocked        : operator blocks lead
+    contacts      --> blocked        : operator blocks lead
+    outreach      --> blocked        : operator blocks lead
+    blocked       --> [*]
 
-    note right of approved
+    note right of approval
         approve_messages mode:
         each message draft also
         requires operator approval
         before send.
+    end note
+
+    note right of outreach
+        Positive reply from contact A
+        sets outreach_stopped=true
+        on all other contacts for
+        this lead.
     end note
 ```
 
@@ -211,17 +261,227 @@ stateDiagram-v2
 
 One row per tenant.
 
-| Column                    | Type          | Constraints              | Notes                                         |
-| ------------------------- | ------------- | ------------------------ | --------------------------------------------- |
-| `id`                      | UUID          | PK, NOT NULL             |                                               |
-| `name`                    | TEXT          | NOT NULL                 |                                               |
-| `google_oauth_token_enc`  | TEXT          |                          | App-encrypted Google Workspace OAuth token.   |
-| `whatsapp_api_key_enc`    | TEXT          |                          | App-encrypted WhatsApp Business API key.      |
-| `slack_webhook_url_enc`   | TEXT          |                          | App-encrypted Slack webhook URL.              |
-| `notification_rules`      | JSONB         |                          | `{event_type: channel}` map.                  |
-| `retargeting_cooldown_days` | INTEGER     | DEFAULT 30               | Days before rejected lead can be re-qualified.|
-| `default_approval_mode`   | approval_mode | NOT NULL, DEFAULT `full_auto` |                                          |
-| `created_at`              | TIMESTAMPTZ   | NOT NULL, DEFAULT now()  |                                               |
+| Column                      | Type          | Constraints                   | Notes                                          |
+| --------------------------- | ------------- | ----------------------------- | ---------------------------------------------- |
+| `id`                        | UUID          | PK, NOT NULL                  |                                                |
+| `name`                      | TEXT          | NOT NULL                      |                                                |
+| `google_oauth_token_enc`    | TEXT          |                               | App-encrypted Google Workspace OAuth token.    |
+| `whatsapp_api_key_enc`      | TEXT          |                               | App-encrypted WhatsApp Business API key.       |
+| `slack_webhook_url_enc`     | TEXT          |                               | App-encrypted Slack webhook URL.               |
+| `notification_rules`        | JSONB         |                               | `{event_type: channel}` map.                   |
+| `retargeting_cooldown_days` | INTEGER       | DEFAULT 30                    | Days before rejected lead can be re-targeted.  |
+| `default_approval_mode`     | approval_mode | NOT NULL, DEFAULT `full_auto` |                                                |
+| `created_at`                | TIMESTAMPTZ   | NOT NULL, DEFAULT now()       |                                                |
+| `updated_at`                | TIMESTAMPTZ   | NOT NULL, DEFAULT now()       |                                                |
+| `deleted_at`                | TIMESTAMPTZ   |                               | NULL = active.                                 |
+
+**Indexes:** PK on `id`.
+
+---
+
+### `offerings`
+
+One or many per tenant. Stores the full `DiscoveryConfig`, `ICP`, `QualificationConfig`, and `OutreachConfig` as JSONB.
+
+| Column                 | Type        | Constraints               | Notes                           |
+| ---------------------- | ----------- | ------------------------- | ------------------------------- |
+| `id`                   | UUID        | PK, NOT NULL              |                                 |
+| `tenant_id`            | UUID        | NOT NULL, FK → tenants.id |                                 |
+| `name`                 | TEXT        | NOT NULL                  |                                 |
+| `description`          | TEXT        |                           |                                 |
+| `value_proposition`    | TEXT        |                           |                                 |
+| `pain_points`          | TEXT[]      |                           |                                 |
+| `discovery_config`     | JSONB       | NOT NULL                  | Serialised `DiscoveryConfig`.   |
+| `icp`                  | JSONB       | NOT NULL                  | Serialised `ICP`.               |
+| `qualification_config` | JSONB       | NOT NULL                  | Serialised `QualificationConfig`. |
+| `outreach_config`      | JSONB       | NOT NULL                  | Serialised `OutreachConfig`.    |
+| `created_at`           | TIMESTAMPTZ | NOT NULL, DEFAULT now()   |                                 |
+| `updated_at`           | TIMESTAMPTZ | NOT NULL, DEFAULT now()   |                                 |
+| `deleted_at`           | TIMESTAMPTZ |                           | NULL = active.                  |
+
+**Indexes:** PK on `id`; `idx_offerings_tenant` on `(tenant_id)`.
+
+---
+
+### `campaigns`
+
+One or many per offering. Per-field overrides as JSONB (NULL = use offering default).
+
+| Column                   | Type            | Constraints                  | Notes                                              |
+| ------------------------ | --------------- | ---------------------------- | -------------------------------------------------- |
+| `id`                     | UUID            | PK, NOT NULL                 |                                                    |
+| `tenant_id`              | UUID            | NOT NULL, FK → tenants.id    |                                                    |
+| `offering_id`            | UUID            | NOT NULL, FK → offerings.id  |                                                    |
+| `name`                   | TEXT            | NOT NULL                     |                                                    |
+| `discovery_override`     | JSONB           |                              | Partial `DiscoveryConfig`. NULL = no override.     |
+| `icp_override`           | JSONB           |                              | Partial `ICP`. NULL = no override.                 |
+| `qualification_override` | JSONB           |                              | Partial `QualificationConfig`. NULL = no override. |
+| `outreach_override`      | JSONB           |                              | Partial `OutreachConfig`. NULL = no override.      |
+| `schedule`               | TEXT            |                              | Cron expression. NULL = manual trigger only.       |
+| `volume_cap`             | INTEGER         |                              | Max leads per run. NULL = unlimited.               |
+| `approval_mode`          | approval_mode   |                              | NULL = inherit from tenant default.                |
+| `status`                 | campaign_status | NOT NULL, DEFAULT `active`   |                                                    |
+| `created_at`             | TIMESTAMPTZ     | NOT NULL, DEFAULT now()      |                                                    |
+| `updated_at`             | TIMESTAMPTZ     | NOT NULL, DEFAULT now()      |                                                    |
+| `deleted_at`             | TIMESTAMPTZ     |                              | NULL = active.                                     |
+
+**Indexes:** PK on `id`; `idx_campaigns_tenant` on `(tenant_id)`; `idx_campaigns_offering` on `(tenant_id, offering_id)`; `idx_campaigns_status` on `(tenant_id, status)` WHERE `deleted_at IS NULL`.
+
+---
+
+### `links`
+
+Raw discovery results — one row per URL found during a campaign run. A single page can surface multiple leads (one per identified company). Page text is stored for downstream processing; it is not returned in API responses (can be large).
+
+| Column       | Type        | Constraints                  | Notes                                             |
+| ------------ | ----------- | ---------------------------- | ------------------------------------------------- |
+| `id`         | UUID        | PK, NOT NULL                 |                                                   |
+| `tenant_id`  | UUID        | NOT NULL, FK → tenants.id    |                                                   |
+| `campaign_id`| UUID        | NOT NULL, FK → campaigns.id  |                                                   |
+| `url`        | TEXT        | NOT NULL                     |                                                   |
+| `source`     | link_source | NOT NULL                     | `web`, `linkedin`, `directory`.                   |
+| `page_text`  | TEXT        |                              | Full scraped body. NULL = not yet scraped or failed. |
+| `scraped_at` | TIMESTAMPTZ |                              | NULL = not yet scraped.                           |
+| `created_at` | TIMESTAMPTZ | NOT NULL, DEFAULT now()      |                                                   |
+
+**Indexes:** PK on `id`; `idx_links_campaign` on `(tenant_id, campaign_id)`; unique `idx_links_url` on `(tenant_id, campaign_id, url)` — deduplication guard.
+
+---
+
+### `leads`
+
+One row per identified company per campaign. Progresses through `lead_stage` values. Stage field is the single source of truth for where this lead sits in the pipeline.
+
+| Column               | Type        | Constraints                  | Notes                                                    |
+| -------------------- | ----------- | ---------------------------- | -------------------------------------------------------- |
+| `id`                 | UUID        | PK, NOT NULL                 |                                                          |
+| `tenant_id`          | UUID        | NOT NULL, FK → tenants.id    |                                                          |
+| `campaign_id`        | UUID        | NOT NULL, FK → campaigns.id  |                                                          |
+| `link_id`            | UUID        |                              | FK → links.id. The link from which this lead was identified. Nullable (manual leads). |
+| `stage`              | lead_stage  | NOT NULL, DEFAULT `prospect` |                                                          |
+| `company_name`       | TEXT        |                              | Extracted company name. Populated by `identify_leads`.   |
+| `domain`             | TEXT        |                              | Company website/domain. Populated by `identify_leads`.   |
+| `industry`           | TEXT        |                              | Detected industry. Updated during research.              |
+| `headcount_range`    | TEXT        |                              | e.g. `"10–50"`. Updated during research.                 |
+| `business_type`      | business_type |                            | Detected business type. Updated during research.         |
+| `research_summary`   | TEXT        |                              | Cumulative LLM summary. Appended each research run.      |
+| `signals`            | JSONB       |                              | List of buying-intent signals. Appended each research run. |
+| `score`              | NUMERIC(5,2)|                              | 0–100. NULL until qualified.                             |
+| `per_criterion_scores` | JSONB     |                              | `[{criterion_name, score}]`. NULL until qualified.       |
+| `rationale`          | TEXT        |                              | LLM reasoning for score.                                 |
+| `rejection_reason`   | TEXT        |                              | NULL unless stage = `rejected`.                          |
+| `detected_language`  | TEXT        |                              | ISO 639-1 code. Set during research.                     |
+| `blocked_at`         | TIMESTAMPTZ |                              | Non-null = permanently blocked.                          |
+| `last_researched_at` | TIMESTAMPTZ |                              | Timestamp of most recent research run.                   |
+| `created_at`         | TIMESTAMPTZ | NOT NULL, DEFAULT now()      |                                                          |
+| `updated_at`         | TIMESTAMPTZ | NOT NULL, DEFAULT now()      |                                                          |
+
+No `deleted_at` — leads are permanently blocked via `blocked_at`. The audit trail must be preserved.
+
+**Indexes:** PK on `id`; `idx_leads_tenant` on `(tenant_id)`; `idx_leads_campaign_stage` on `(tenant_id, campaign_id, stage)` WHERE `blocked_at IS NULL`; `idx_leads_domain` on `(tenant_id, campaign_id, domain)` — deduplication guard.
+
+---
+
+### `contacts`
+
+Individual people within a lead's company. Populated by the `get_contacts` node after qualification. One row per person per lead (not per campaign — the same person at the same company in two campaigns has two rows).
+
+| Column                  | Type           | Constraints               | Notes                                                                |
+| ----------------------- | -------------- | ------------------------- | -------------------------------------------------------------------- |
+| `id`                    | UUID           | PK, NOT NULL              |                                                                      |
+| `tenant_id`             | UUID           | NOT NULL, FK → tenants.id |                                                                      |
+| `lead_id`               | UUID           | NOT NULL, FK → leads.id   |                                                                      |
+| `first_name`            | TEXT           |                           |                                                                      |
+| `last_name`             | TEXT           |                           |                                                                      |
+| `email`                 | TEXT           |                           | Unique per lead (unique `(lead_id, email)` constraint).              |
+| `phone`                 | TEXT           |                           |                                                                      |
+| `role`                  | TEXT           |                           | Job title string.                                                    |
+| `seniority_level`       | seniority_level|                           |                                                                      |
+| `decision_maker_score`  | NUMERIC(5,2)   |                           | 0–100. Higher = more likely to be the right person to contact.       |
+| `approved_for_outreach` | BOOLEAN        | NOT NULL, DEFAULT false   | Set to true when operator approves this contact at the approval gate.|
+| `outreach_stopped`      | BOOLEAN        | NOT NULL, DEFAULT false   | Set to true when a positive reply is received from any contact for this lead. |
+| `created_at`            | TIMESTAMPTZ    | NOT NULL, DEFAULT now()   |                                                                      |
+| `updated_at`            | TIMESTAMPTZ    | NOT NULL, DEFAULT now()   |                                                                      |
+
+**Indexes:** PK on `id`; `idx_contacts_lead` on `(tenant_id, lead_id)`; unique `idx_contacts_email` on `(lead_id, email)`.
+
+---
+
+### `messages`
+
+All drafted and sent messages, across all channels and sequence positions. Each row targets one contact.
+
+| Column                  | Type           | Constraints                  | Notes                                                       |
+| ----------------------- | -------------- | ---------------------------- | ----------------------------------------------------------- |
+| `id`                    | UUID           | PK, NOT NULL                 |                                                             |
+| `tenant_id`             | UUID           | NOT NULL, FK → tenants.id    |                                                             |
+| `campaign_id`           | UUID           | NOT NULL, FK → campaigns.id  |                                                             |
+| `lead_id`               | UUID           | NOT NULL, FK → leads.id      |                                                             |
+| `contact_id`            | UUID           |                              | FK → contacts.id. NULL for messages drafted before contact discovery. |
+| `channel`               | channel        | NOT NULL                     |                                                             |
+| `subject`               | TEXT           |                              | Email only.                                                 |
+| `body`                  | TEXT           | NOT NULL                     |                                                             |
+| `personalisation_notes` | TEXT           |                              | LLM reasoning used during drafting.                         |
+| `config_snapshot`       | JSONB          | NOT NULL                     | Full `ResolvedConfig` at time of draft. Immutable.          |
+| `sequence_number`       | INTEGER        | NOT NULL, DEFAULT 1          | 1 = first touch, 2+ = follow-ups.                          |
+| `status`                | message_status | NOT NULL, DEFAULT `drafted`  |                                                             |
+| `sent_at`               | TIMESTAMPTZ    |                              | NULL until sent.                                            |
+| `external_message_id`   | TEXT           |                              | Provider ID (Gmail thread ID, WhatsApp message ID).         |
+| `created_at`            | TIMESTAMPTZ    | NOT NULL, DEFAULT now()      |                                                             |
+| `updated_at`            | TIMESTAMPTZ    | NOT NULL, DEFAULT now()      |                                                             |
+
+**Indexes:** PK on `id`; `idx_messages_tenant` on `(tenant_id)`; `idx_messages_lead` on `(tenant_id, lead_id)`; `idx_messages_contact` on `(tenant_id, contact_id)`; `idx_messages_pending` on `(tenant_id, status)` WHERE `status = 'pending_approval'`.
+
+---
+
+### `replies`
+
+All inbound replies across all channels. One row per received reply.
+
+| Column        | Type        | Constraints               | Notes                                               |
+| ------------- | ----------- | ------------------------- | --------------------------------------------------- |
+| `id`          | UUID        | PK, NOT NULL              |                                                     |
+| `tenant_id`   | UUID        | NOT NULL, FK → tenants.id |                                                     |
+| `lead_id`     | UUID        | NOT NULL, FK → leads.id   |                                                     |
+| `contact_id`  | UUID        |                           | FK → contacts.id. NULL if sender cannot be identified. |
+| `message_id`  | UUID        |                           | FK → messages.id. NULL if reply cannot be threaded. |
+| `channel`     | channel     | NOT NULL                  |                                                     |
+| `content`     | TEXT        | NOT NULL                  |                                                     |
+| `sentiment`   | sentiment   |                           | NULL until classified.                              |
+| `received_at` | TIMESTAMPTZ | NOT NULL                  |                                                     |
+| `created_at`  | TIMESTAMPTZ | NOT NULL, DEFAULT now()   |                                                     |
+
+**Indexes:** PK on `id`; `idx_replies_lead` on `(tenant_id, lead_id)`; `idx_replies_contact` on `(tenant_id, contact_id)`.
+
+---
+
+### `events`
+
+Append-only audit log. One row per agent action. Never updated, never deleted.
+
+| Column            | Type        | Constraints               | Notes                                                     |
+| ----------------- | ----------- | ------------------------- | --------------------------------------------------------- |
+| `id`              | UUID        | PK, NOT NULL              |                                                           |
+| `tenant_id`       | UUID        | NOT NULL, FK → tenants.id |                                                           |
+| `campaign_id`     | UUID        |                           | FK → campaigns.id. NULL for tenant-level events.          |
+| `lead_id`         | UUID        |                           | FK → leads.id. NULL for campaign-level events.            |
+| `contact_id`      | UUID        |                           | FK → contacts.id. NULL for non-contact events.            |
+| `event_type`      | TEXT        | NOT NULL                  | e.g. `link.scraped`, `lead.prospect`, `lead.researched`, `lead.qualified`, `lead.rejected`, `contact.discovered`, `approval.pending`, `approval.granted`, `message.sent`, `reply.received`, `outreach.stopped`. |
+| `payload`         | JSONB       | NOT NULL                  | Event-specific data.                                      |
+| `config_snapshot` | JSONB       |                           | `ResolvedConfig` active at time of event. NULL for non-agent events. |
+| `created_at`      | TIMESTAMPTZ | NOT NULL, DEFAULT now()   |                                                           |
+
+**Indexes:** PK on `id`; `idx_events_tenant_time` on `(tenant_id, created_at DESC)`; `idx_events_campaign` on `(tenant_id, campaign_id, created_at DESC)`; `idx_events_lead` on `(tenant_id, lead_id, created_at DESC)`.
+
+---
+
+## Migration strategy
+
+- Tool: `alembic>=1.13` with `async` support disabled (sync psycopg driver used in migrations).
+- All migrations in `alembic/versions/`. File names: `{revision}_{slug}.py`.
+- `alembic upgrade head` is idempotent — safe to run on every deployment.
+- No raw `ALTER TABLE` outside alembic. No hand-written DDL.
+- Down migrations (`downgrade`) are implemented but not used in production automation — rollback is always a forward migration.
 | `updated_at`              | TIMESTAMPTZ   | NOT NULL, DEFAULT now()  |                                               |
 | `deleted_at`              | TIMESTAMPTZ   |                          | NULL = active.                                |
 

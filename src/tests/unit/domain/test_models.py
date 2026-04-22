@@ -15,67 +15,56 @@ from zer0.domain.config import (
     RubricCriterion,
 )
 from zer0.domain.lead import (
-    LeadSource,
+    Lead,
     LeadStage,
     PerCriterionScore,
-    QualifiedLead,
-    RawLead,
 )
+from zer0.domain.link import Link, LinkSource
 from zer0.domain.outreach import MessageStatus, Sentiment
 
 
 class TestLeadEnums:
     def test_lead_stage_values(self) -> None:
-        assert LeadStage.discovered == "discovered"
-        assert LeadStage.qualified == "qualified"
+        assert LeadStage.prospect == "prospect"
+        assert LeadStage.qualification == "qualification"
         assert LeadStage.rejected == "rejected"
-        assert LeadStage.approved == "approved"
+        assert LeadStage.outreach == "outreach"
 
-    def test_lead_source_values(self) -> None:
-        assert LeadSource.linkedin == "linkedin"
-        assert LeadSource.web == "web"
-        assert LeadSource.directory == "directory"
+    def test_link_source_values(self) -> None:
+        assert LinkSource.linkedin == "linkedin"
+        assert LinkSource.web == "web"
+        assert LinkSource.directory == "directory"
 
 
-class TestRawLead:
+class TestLead:
     def test_minimal_construction(self) -> None:
-        lead = RawLead(
+        lead = Lead(
             id="l1",
+            campaign_id="c1",
+            tenant_id="t1",
+        )
+        assert lead.id == "l1"
+        assert lead.company_name is None
+        assert lead.signals == []
+        assert lead.stage == LeadStage.prospect
+
+    def test_signals_append(self) -> None:
+        lead = Lead(id="l1", campaign_id="c1", tenant_id="t1", signals=["growth"])
+        updated = lead.model_copy(update={"signals": lead.signals + ["hiring"]})
+        assert updated.signals == ["growth", "hiring"]
+
+
+class TestLink:
+    def test_minimal_construction(self) -> None:
+        lnk = Link(
+            id="lnk1",
             campaign_id="c1",
             tenant_id="t1",
             url="https://example.com",
-            source=LeadSource.web,
+            source=LinkSource.web,
         )
-        assert lead.id == "l1"
-        assert lead.name is None
-        assert lead.company is None
-
-    def test_source_coercion_from_string(self) -> None:
-        lead = RawLead(
-            id="l1",
-            campaign_id="c1",
-            tenant_id="t1",
-            url="https://x.com",
-            source="linkedin",  # type: ignore[arg-type]
-        )
-        assert lead.source == LeadSource.linkedin
-
-
-class TestQualifiedLead:
-    def test_inherits_raw_lead_fields(self) -> None:
-        lead = QualifiedLead(
-            id="l1",
-            campaign_id="c1",
-            tenant_id="t1",
-            url="https://x.com",
-            source=LeadSource.web,
-            score=80.0,
-            per_criterion_scores=[PerCriterionScore(criterion_name="fit", score=80.0)],
-            rationale="Strong fit",
-        )
-        assert lead.score == 80.0
-        assert lead.url == "https://x.com"
-        assert lead.company is None  # optional field from RawLead
+        assert lnk.url == "https://example.com"
+        assert lnk.page_text is None
 
 
 class TestConfigValidation:

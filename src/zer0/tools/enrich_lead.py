@@ -1,43 +1,41 @@
 """enrich_lead tool.
 
-Spec: spec/product/02-architecture.md — Tools table
-Input:  RawLead + ICP + scraped page text + contact details
-Output: EnrichedLead
+Spec: spec/product/04-capabilities/02-enrichment.md
+Input:  Lead + page_text (pre-scraped) + ICP
+Output: Lead with research_summary and signals appended (cumulative)
 """
 
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 
-from zer0.domain import EnrichedLead, ICP, RawLead
+from zer0.domain import ICP, Lead
 from zer0.domain.config import ResolvedConfig
 from zer0.llm.client import LLMClient
 
 
 def enrich_lead(
     *,
-    raw_lead: RawLead,
-    icp: ICP,
+    lead: Lead,
     page_text: str,
-    contact_name: str | None,
-    contact_email: str | None,
-    contact_phone: str | None,
-    contact_role: str | None,
+    icp: ICP,
     llm: LLMClient,
     config: ResolvedConfig,
-) -> EnrichedLead:
-    """Combine scraped page text and contact details into an EnrichedLead via LLM.
+) -> Lead:
+    """Append research signals from page text to the lead (cumulative).
 
-    The LLM extracts company summary, role summary, and recent signals
-    relevant to the ICP from the raw page text.
+    The LLM extracts a company summary and signals relevant to the ICP.
+    Results are *appended* to existing research_summary / signals — never overwritten.
     """
     system = llm.load_prompt("researcher", config)
     user = (
-        f"Company URL: {raw_lead.url}\n\n"
+        f"Company: {lead.company_name or 'unknown'}\n"
+        f"Domain: {lead.domain or 'unknown'}\n\n"
         f"Page text:\n{page_text[:6000]}\n\n"
         f"Target roles: {', '.join(icp.target_roles)}\n"
         f"Target industries: {', '.join(icp.target_industries)}\n\n"
-        "Return JSON with keys: company_summary, role_summary, recent_signals (list of strings)."
+        "Return JSON with keys: company_summary (str), recent_signals (list[str])."
     )
 
     raw = llm.complete(system=system, user=user)
@@ -47,14 +45,14 @@ def enrich_lead(
     except json.JSONDecodeError:
         parsed = {}
 
-    base = raw_lead.model_dump()
-    base["name"] = contact_name or raw_lead.name
-    return EnrichedLead(
-        **base,
-        company_summary=parsed.get("company_summary"),
-        role_summary=parsed.get("role_summary"),
-        recent_signals=parsed.get("recent_signals", []),
-        contact_email=contact_email,
-        contact_phone=contact_phone,
-        contact_role=contact_role,
-    )
+    new_summary: str = parsed.get("company_summary", "")
+    new_signals: list[str] = parsed.get("recent_signals", [])
+
+    updated_summary = "\n\n".join(filter(None, [lead.research_summary, new_summary])) or None
+    updated_signals = list(lead.signals) + new_signals
+
+    return lead.model_copy(update={
+        "research_summary": updated_summary,
+        "signals": updated_signals,
+        "last_researched_at": datetime.now(tz=timezone.utc),
+    })

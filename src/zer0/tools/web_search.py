@@ -14,8 +14,14 @@ import uuid
 
 from tavily import TavilyClient  # type: ignore[import-untyped]
 
-from zer0.domain import DiscoveryConfig, ICP, LeadSource, RawLead
+from zer0.domain import DiscoveryConfig, ICP
 from zer0.tools._query_render import render_query
+
+
+class _UrlResult:
+    """Minimal container so node_discover can call getattr(r, 'url', None)."""
+    def __init__(self, url: str) -> None:
+        self.url = url
 
 
 def web_search(
@@ -25,25 +31,15 @@ def web_search(
     tenant_id: str,
     campaign_id: str,
     tavily_api_key: str,
-) -> list[RawLead]:
+) -> list[_UrlResult]:
     """Keyword search via Tavily to discover leads matching the ICP."""
     client = TavilyClient(api_key=tavily_api_key)
-    leads: list[RawLead] = []
+    results_out: list[_UrlResult] = []
 
     for template in discovery_config.query_templates:
         query = render_query(template, discovery_config, icp)
         results = client.search(query=query, max_results=discovery_config.volume_per_run)
         for result in results.get("results", []):
-            leads.append(
-                RawLead(
-                    id=str(uuid.uuid4()),
-                    campaign_id=campaign_id,
-                    tenant_id=tenant_id,
-                    company=None,
-                    name=None,
-                    url=result["url"],
-                    source=LeadSource.web,
-                )
-            )
+            results_out.append(_UrlResult(url=result["url"]))
 
-    return leads
+    return results_out

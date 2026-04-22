@@ -47,13 +47,12 @@ class TestOrmModelInstantiation:
         row = LeadRow(
             tenant_id="t1",
             campaign_id="c1",
-            url="https://example.com",
-            source="web",
+            company_name="Acme Corp",
         )
-        # SQLAlchemy column default (stage="discovered") applies at flush
+        # SQLAlchemy column default (stage="prospect") applies at flush
         assert row.score is None
-        assert row.name is None
-        assert row.contact_email is None
+        assert row.company_name == "Acme Corp"
+        assert row.domain is None
 
     def test_event_row_fields(self) -> None:
         row = EventRow(

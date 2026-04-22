@@ -7,7 +7,7 @@ Output: OutreachDraft (or list[OutreachDraft] for multi-channel)
 
 from __future__ import annotations
 
-from zer0.domain import QualifiedLead
+from zer0.domain import Contact, Lead
 from zer0.domain.config import Channel, ResolvedConfig
 from zer0.domain.outreach import OutreachDraft
 from zer0.llm.client import LLMClient
@@ -15,7 +15,8 @@ from zer0.llm.client import LLMClient
 
 def draft_outreach(
     *,
-    lead: QualifiedLead,
+    lead: Lead,
+    contact: Contact | None = None,
     channel: Channel,
     sequence_number: int = 1,
     llm: LLMClient,
@@ -29,12 +30,12 @@ def draft_outreach(
     user = (
         f"Channel: {channel.value}\n"
         f"Sequence: {sequence_number}\n"
-        f"Contact name: {lead.name}\n"
-        f"Company: {lead.company}\n"
-        f"Company summary: {lead.company_summary}\n"
-        f"Role: {lead.contact_role}\n"
+        f"Contact name: {contact.full_name if contact else 'unknown'}\n"
+        f"Contact role: {contact.role if contact else 'unknown'}\n"
+        f"Company: {lead.company_name}\n"
+        f"Research summary: {lead.research_summary}\n"
         f"Score rationale: {lead.rationale}\n"
-        f"Signals: {', '.join(lead.recent_signals)}\n"
+        f"Signals: {', '.join(lead.signals)}\n"
         f"Language: {lead.detected_language or 'en'}\n\n"
         "Return the message body only (no JSON). "
         "For email also prepend 'Subject: <subject line>' on the first line."

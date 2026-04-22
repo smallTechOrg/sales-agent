@@ -124,6 +124,28 @@ Rule: [`spec/engineering/commits.md`](commits.md)
 - Commit message: ≤70 char subject, imperative mood, body references the spec file that authorises the change.
 - PR body: Summary (2–3 bullets) + Test plan checklist + spec file(s) affected.
 
+### HARD STOP — before every single reply
+
+This rule fires **before any reply, at any point in the session, without exception**. It does not only fire at the end — it fires every time before the agent writes a message to the user.
+
+```
+BEFORE REPLYING:
+  1. Run `git status`
+  2. If any file is modified, staged, or untracked and represents completed work:
+       git add <files>
+       git commit -m "<message>"
+       git push
+  3. Run `git status` again — must show "nothing to commit, working tree clean"
+  4. Only then write the reply
+```
+
+Failure mode this blocks: an agent completes real work, tells the user "done", and the work is not committed. This happens most often when:
+- Tests pass and the agent replies immediately without committing the fixes.
+- The agent fixes multiple files in one task and only commits the "main" ones.
+- The session is long and the agent forgets prior edits are still dirty.
+
+**If the reply describes work as completed and `git status` is not clean, the reply is wrong. Fix the tree first.**
+
 ### Mandatory commit-and-push checkpoints — non-negotiable
 
 An AI agent **must** commit **and push** at **each** of the following moments. Not at the end of the session. At each checkpoint, with no exceptions:
@@ -133,13 +155,25 @@ An AI agent **must** commit **and push** at **each** of the following moments. N
 | After completing any spec change | `git add <spec files> && git commit && git push` immediately. |
 | After completing any code change | `git add <src files> && git commit && git push` immediately. |
 | After completing a task that was in the todo list | Mark the todo completed, commit **and push** before moving to the next todo. |
-| Before responding to the user after completing work | Verify with `git status` that the working tree is clean. If it is not, commit and push before replying. |
+| After any test file is added or modified | Treat as a code change — commit and push immediately. |
+| Before responding to the user after completing work | Run `git status`. If not clean, commit and push before replying. |
 
 **Every commit is pushed immediately.** There is no "push at the end" — pushing after every commit means interrupted sessions, browser refreshes, and second agents always see the true state of the branch.
+
+**Test files are code.** Modifying `tests/` is a code change. The rule applies.
 
 **The working tree must be clean before any user-facing reply that describes completed work.** If `git status` shows modified or untracked files that represent completed work, that is a bug in the agent's behaviour — fix it by committing before replying.
 
 This rule exists because leaving uncommitted work in the tree means the work is lost if the session is interrupted, and it misleads the user about the state of the repository.
+
+### Replies must include the commit reference when work is described as complete
+
+When a reply says something is "done", "complete", "passing", "fixed", or equivalent, it **must** include the short commit SHA or the output of `git log --oneline -1`. This is not optional formatting — it is evidence that the commit happened. A reply that says "72 tests pass" without a commit SHA does not satisfy the commit rule.
+
+Example of a valid completion reply:
+```
+72 tests pass. Committed: abc1234 fix: update stale unit tests for new pipeline
+```
 
 ### Session-end sweep — before considering any reply "done"
 

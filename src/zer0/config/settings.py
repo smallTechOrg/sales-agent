@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     # LLM
     llm_provider: str = Field("gemini", description="LLM provider: gemini (default).")
     gemini_api_key: str = Field(..., description="Google Gemini API key. Required.")
-    llm_model: str = Field("gemini-2.0-flash", description="LLM model ID.")
+    llm_model: str = Field("gemini-2.5-flash", description="LLM model ID.")
     llm_max_tokens: int = Field(4096, ge=256, le=16384)
 
     # Web search — empty string disables discovery at runtime

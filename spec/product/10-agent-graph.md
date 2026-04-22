@@ -25,16 +25,17 @@ class AgentState(TypedDict):
     config: ResolvedConfig               # Computed once at run start. Immutable.
 
     # --- Discovery ---
-    raw_leads: list[RawLead]             # Accumulated across all discovery sources.
+    links: list[Link]                    # Raw URLs discovered across all sources.
 
-    # --- Per-lead pipeline (keyed by lead.id) ---
-    enriched_leads: list[EnrichedLead]
-    qualified_leads: list[QualifiedLead]
-    rejected_leads: list[RejectedLead]
+    # --- Lead pipeline ---
+    leads: list[Lead]                    # Company entities extracted from links. Stage field tracks progress.
+
+    # --- Contact pipeline ---
+    contacts: list[Contact]              # People within qualified companies.
 
     # --- Approval gate ---
-    pending_approval_lead_ids: list[str] # Leads waiting for human qualify approval.
-    approved_lead_ids: list[str]         # Approved after human review.
+    pending_approval_lead_ids: list[str] # Leads whose contacts are waiting for human approval.
+    approved_contact_ids: list[str]      # Contact IDs approved for outreach.
 
     # --- Outreach ---
     outreach_drafts: list[OutreachDraft]
@@ -43,7 +44,7 @@ class AgentState(TypedDict):
 
     # --- Run control ---
     error: str | None                    # Non-null if the run should abort.
-    completed_lead_ids: list[str]        # Leads fully finished (responded or max follow-ups reached).
+    completed_lead_ids: list[str]        # Leads fully finished (first_contact or no_contact).
 ```
 
 All mutations to `AgentState` happen inside node functions. No node reads from the database mid-run — all data flows through state. State is checkpointed to Postgres via LangGraph's checkpointer after each node completes.
@@ -73,54 +74,97 @@ The returned dict is merged into state. Nodes must not mutate the state dict in-
 
 - Reads `config.discovery_config` and `config.icp`.
 - Calls discovery tools in sequence: `linkedin_search`, `web_search`, `directory_search` — filtered to sources listed in `config.discovery_config.sources`.
-- Deduplicates results by URL (against existing `leads` rows for this campaign).
+- Deduplicates results by URL (against existing `links` rows for this campaign).
 - Trims to `min(len(results), config.discovery_config.volume_per_run)`.
-- Writes `lead.discovered` events for each new lead.
-- Returns `{"raw_leads": [...]}`
+- Persists new `Link` rows to the database.
+- Writes `lead.discovered` events for each new link.
+- Returns `{"links": [...]}`.
+
+### `scrape_links`
+
+- Iterates `state.links` where `link.page_text is None`.
+- For each: calls `scrape_page(link.url)` → cleaned text; updates `link.page_text` and `link.scraped_at`.
+- Persists updated `Link` rows.
+- Returns `{"links": [...]}` with page text populated.
+
+### `identify_leads`
+
+- Iterates `state.links` where `link.page_text is not None`.
+- For each link: calls `identify_leads(link, config.icp)` → LLM extracts company entities from page text.
+- Creates one `Lead` (stage `prospect`) per identified company. Deduplicates by `(campaign_id, domain)` — if a lead with the same domain already exists in the DB, skip creation.
+- Persists new `Lead` rows; sets `lead.link_id`.
+- Writes `lead.identified` events.
+- Returns `{"leads": [...]}`.
 
 ### `research`
 
-- Iterates `state.raw_leads`.
-- For each lead: calls `scrape_page(lead.url)`, `find_contact(lead.url, config.icp.target_roles)`, then `enrich_lead(raw_lead, config.icp)`.
-- Writes `lead.enriched` event per lead.
-- Returns `{"enriched_leads": [...]}`.
+- Iterates `state.leads` where `lead.stage == 'prospect'`.
+- For each lead: calls `enrich_lead(lead, config.icp)`.
+  - Tool appends new signals to `lead.signals` (does NOT overwrite).
+  - Tool appends new summary paragraph to `lead.research_summary` (does NOT overwrite).
+  - Sets `lead.last_researched_at = now()`.
+  - Sets `lead.stage = 'research'`.
+- Persists updated `Lead` rows.
+- Writes `lead.researched` events.
+- Returns `{"leads": [...]}` with updated Lead objects.
 
 ### `qualify`
 
-- Iterates `state.enriched_leads`.
-- For each lead: calls `qualify_lead(enriched_lead, config.qualification_config)`.
-- Separates results into qualified vs rejected.
+- Iterates `state.leads` where `lead.stage == 'research'`.
+- For each lead: calls `qualify_lead(lead, config.qualification_config)`.
+  - Sets `lead.score`, `lead.per_criterion_scores`, `lead.rationale`.
+  - If `score >= threshold`: sets `lead.stage = 'qualification'`.
+  - If `score < threshold` or disqualifying signal found: sets `lead.stage = 'rejected'`, `lead.rejection_reason`.
+- Persists updated `Lead` rows.
 - Writes `lead.qualified` or `lead.rejected` event per lead.
-- Returns `{"qualified_leads": [...], "rejected_leads": [...]}`.
+- Returns `{"leads": [...]}` with stage-updated leads.
+
+### `get_contacts`
+
+- Iterates `state.leads` where `lead.stage == 'qualification'`.
+- For each lead: calls `find_all_contacts(lead, config.icp.target_roles)` → list of `Contact` objects.
+- Persists new `Contact` rows for each result. Does not overwrite existing contacts.
+- Sets `lead.stage = 'contacts'`.
+- Writes `contacts.found` events.
+- Returns `{"leads": [...], "contacts": [...]}` with leads stage-updated and contacts added.
 
 ### `approval_gate`
 
 - Checks `config.approval_mode`.
-- If `full_auto` or `approve_messages`: passes all qualified leads directly → `approved_lead_ids = [l.id for l in qualified_leads]`.
+- If `full_auto` or `approve_messages`:
+  - Sets `approved_contact_ids = [c.id for c in state.contacts]`.
+  - Sets `contact.approved_for_outreach = True` for all contacts.
+  - Sets `lead.stage = 'outreach'` for all leads in state.
 - If `approve_qualify` or `approve_all`:
-  - For each qualified lead, creates a `messages` row with `status = pending_approval` (qualify type).
-  - Posts `approval.pending` event and Slack notification.
+  - For each lead, persists a `status = pending_approval` record and posts `approval.pending` event and Slack notification.
   - Returns `{"pending_approval_lead_ids": [...]}`.
-  - The graph then **parks** (returns to the caller). A subsequent API call to `POST /approvals/leads/{id}/qualify` resumes the graph by updating state and re-invoking.
+  - The graph then **parks** (returns to the caller). A subsequent API call to `POST /approvals/leads/{id}/qualify` resumes the graph by updating `approved_contact_ids` and re-invoking.
 
 ### `outreach`
 
-- Iterates `state.approved_lead_ids`.
-- For each lead: calls `detect_language(enriched_lead)`, then `draft_outreach(qualified_lead, config.outreach_config)`.
-- If `approval_mode` is `approve_messages` or `approve_all`:
-  - Creates `messages` row with `status = pending_approval`.
-  - Posts `approval.pending` event and Slack notification.
-  - Parks until `POST /approvals/messages/{id}` resumes.
-- Otherwise: calls `send_email` or `send_whatsapp` based on `config.outreach_config.channels_enabled`.
-- Writes `message.drafted`, (optionally) `message.sent` events.
+- Iterates `state.approved_contact_ids`, loading each `Contact` and its parent `Lead`.
+- For each contact:
+  - Calls `detect_language(lead)` to determine outreach language.
+  - Calls `draft_outreach(lead, contact, config.outreach_config)` → `OutreachDraft`.
+  - If `approval_mode` is `approve_messages` or `approve_all`:
+    - Creates `messages` row with `status = pending_approval`.
+    - Posts `approval.pending` event and Slack notification.
+    - Parks until `POST /approvals/messages/{id}` resumes.
+  - Otherwise: calls `send_email` or `send_whatsapp` based on `config.outreach_config.channels_enabled`.
+  - Writes `message.drafted`, (optionally) `message.sent` events.
 - Returns `{"outreach_drafts": [...], "sent_messages": [...]}`.
 
-### `follow_up_loop`
+### `check_replies`
 
-- Runs after `outreach`. Checks for replies via `check_replies`.
-- For leads with a positive reply: writes `reply.received`, `handoff.triggered` events; posts Slack alert; moves lead to `responded` stage; adds to `completed_lead_ids`.
-- For leads with no reply and remaining follow-ups: checks `follow_up_spacing_days` against the last `sent_at` timestamp; sends the next follow-up if due.
-- Loops (via edge back to itself) until all active outreach leads are either responded or exhausted.
+- Runs after `outreach`. Polls for replies via `check_replies` tool.
+- For contacts with a positive reply:
+  - Writes `reply.received`, `first_contact.triggered` events.
+  - Posts Slack alert.
+  - Sets `lead.stage = 'first_contact'` for the parent lead.
+  - Sets `outreach_stopped = True` on all other `Contact` rows for the same lead.
+  - Adds lead ID to `completed_lead_ids`.
+- For contacts with no reply and remaining follow-ups still available: checks `follow_up_spacing_days` against `last sent_at`; sends next follow-up if due.
+- For leads where all contacts are exhausted (no positive reply, max follow-ups reached): sets `lead.stage = 'no_contact'`; adds lead ID to `completed_lead_ids`.
 - Returns `{"replies": [...], "sent_messages": [...], "completed_lead_ids": [...]}`.
 
 ### `handle_error`
@@ -129,52 +173,6 @@ The returned dict is merged into state. Nodes must not mutate the state dict in-
 - Writes an `error` event to the audit log.
 - Posts a Slack alert to the tenant's error channel (if configured).
 - Terminates the run cleanly.
-
----
-
-## Edges
-
-```
-START
-  └─► resolve_config
-         └─► discover
-                └─► research          (parallel fan-out per lead, then fan-in — see below)
-                       └─► qualify
-                              └─► approval_gate
-                                     ├─► [if full_auto / approve_messages] outreach
-                                     └─► [if approve_qualify / approve_all] PARK → resume → outreach
-                                              └─► follow_up_loop ─┐
-                                                                   └─► (loop back if pending follow-ups)
-                                                                          └─► END
-```
-
-Conditional edge from `approval_gate`:
-```python
-def route_after_approval_gate(state: AgentState) -> str:
-    if state["pending_approval_lead_ids"]:
-        return END   # graph parks; re-invoked by approval API
-    return "outreach"
-```
-
-Conditional edge from `follow_up_loop`:
-```python
-def route_follow_up(state: AgentState) -> str:
-    active = [
-        m for m in state["sent_messages"]
-        if m.lead_id not in state["completed_lead_ids"]
-    ]
-    if active:
-        return "follow_up_loop"
-    return END
-```
-
-Error edge: every node checks `state["error"]` at entry and immediately routes to `handle_error` if non-null:
-```python
-def route_on_error(state: AgentState) -> str:
-    if state.get("error"):
-        return "handle_error"
-    return "next_node"
-```
 
 ---
 
@@ -187,32 +185,33 @@ flowchart TD
     START(["▶ START\nrun_campaign()"])
     RC["resolve_config\nLoad Campaign + Offering\n→ ResolvedConfig"]
     ERR["handle_error\nWrite error event\nPost Slack alert"]
-    DISC["discover\nlinkedin_search\nweb_search\ndirectory_search\nDeduplicate by URL"]
-    FO1{{"fan_out\nper raw_lead"}}
-    RL["research_lead ×N\nscrape_page\nfind_contact\nenrich_lead\n[parallel]"]
-    FI1{{"fan_in\nmerge enriched_leads"}}
-    FO2{{"fan_out\nper enriched_lead"}}
-    QL["qualify_lead ×N\nqualify_lead tool\n[parallel]"]
-    FI2{{"fan_in\nmerge qualified / rejected"}}
-    AG["approval_gate\ncheck approval_mode"]
-    PARK1(["⏸ PARK\noperator reviews\nqualify list"])
-    OA["outreach\ndetect_language\ndraft_outreach\nper approved lead"]
+    DISC["discover\nlinkedin_search\nweb_search\ndirectory_search\nDedup by URL → [Link]"]
+    SCR["scrape_links\nscrape_page per unscraped link\nPopulate link.page_text"]
+    ID["identify_leads\nLLM extracts companies\nfrom each page → [Lead]"]
+    FO1{{"fan_out\nper prospect Lead"}}
+    RS["research ×N\nenrich_lead\nappend signals + summary\n[parallel]"]
+    FI1{{"fan_in\nmerge updated Leads"}}
+    QL["qualify\nqualify_lead per Lead\nscore vs rubric"]
+    GC["get_contacts\nfind_all_contacts per qualified Lead\n→ [Contact]"]
+    AG["approval_gate\ncheck approval_mode\nset approved_contact_ids"]
+    PARK1(["⏸ PARK\noperator reviews\nlead + contact list"])
+    OA["outreach\ndetect_language\ndraft_outreach per Contact\nsend message"]
     PARK2(["⏸ PARK\noperator reviews\neach draft"])
-    FU["follow_up_loop\ncheck_replies\nsend next follow-up\nif spacing elapsed"]
-    HAND["handoff\nmark responded\npost Slack alert\nstop outreach"]
+    CR["check_replies\npoll replies\nstop sibling contacts on positive\nfirst_contact | no_contact"]
     END_N(["⏹ END"])
 
     START  --> RC
     RC     -->|"error"| ERR
     RC     --> DISC
     DISC   -->|"error"| ERR
-    DISC   --> FO1
-    FO1    --> RL
-    RL     --> FI1
-    FI1    --> FO2
-    FO2    --> QL
-    QL     --> FI2
-    FI2    --> AG
+    DISC   --> SCR
+    SCR    --> ID
+    ID     --> FO1
+    FO1    --> RS
+    RS     --> FI1
+    FI1    --> QL
+    QL     --> GC
+    GC     --> AG
 
     AG     -->|"full_auto / approve_messages"| OA
     AG     -->|"approve_qualify / approve_all"| PARK1
@@ -220,12 +219,10 @@ flowchart TD
 
     OA     -->|"approve_messages / approve_all"| PARK2
     PARK2  -.->|"API: POST /approvals/messages/*\nresumes graph"| OA
-    OA     -->|"full_auto / approve_qualify"| FU
+    OA     -->|"full_auto / approve_qualify"| CR
 
-    FU     -->|"positive reply"| HAND
-    FU     -->|"more follow-ups pending"| FU
-    FU     -->|"all leads done"| END_N
-    HAND   --> END_N
+    CR     -->|"follow-ups pending"| CR
+    CR     -->|"all leads done"| END_N
     ERR    --> END_N
 
     style PARK1 fill:#f39c12,color:#000,stroke:#e67e22
@@ -239,32 +236,25 @@ flowchart TD
 
 ## Fan-out / fan-in: per-lead parallelism
 
-Research and qualify run in parallel across leads using LangGraph's `Send` API.
+Research runs in parallel across leads using LangGraph's `Send` API.
 
 ```mermaid
 flowchart LR
-    DISC["discover\n(N raw_leads)"]
+    ID["identify_leads\n(N prospect Leads)"]
     subgraph par1 ["Parallel — one sub-graph per lead"]
         direction TB
-        RL1["research_lead\nlead_1"]
-        RL2["research_lead\nlead_2"]
-        RLN["research_lead\nlead_N"]
+        RS1["research\nlead_1"]
+        RS2["research\nlead_2"]
+        RSN["research\nlead_N"]
     end
-    FI1["fan-in\nstate.enriched_leads = [all results]"]
+    FI1["fan-in\nstate.leads = [all results — stage: research]"]
 
-    subgraph par2 ["Parallel — one sub-graph per enriched lead"]
-        direction TB
-        QL1["qualify_lead\nlead_1"]
-        QL2["qualify_lead\nlead_2"]
-        QLN["qualify_lead\nlead_N"]
-    end
-    FI2["fan-in\nstate.qualified_leads + rejected_leads"]
-
-    DISC --> RL1 & RL2 & RLN --> FI1
-    FI1  --> QL1 & QL2 & QLN --> FI2
+    ID --> RS1 & RS2 & RSN --> FI1
 ```
 
-Each `research_lead` / `qualify_lead` sub-graph is an independent LangGraph `Send` invocation. They share no mutable state — each returns a partial dict that LangGraph merges via list-append reducers declared on `AgentState`.
+Each `research` sub-graph is an independent LangGraph `Send` invocation. They share no mutable state — each returns a partial dict that LangGraph merges via list-append reducers declared on `AgentState`.
+
+Qualification, contact discovery, and outreach are similarly per-lead but implemented as sequential passes over `state.leads` (not parallel fan-out) — the volume is low enough that parallelism is not required in v1.
 
 ---
 
@@ -292,75 +282,112 @@ sequenceDiagram
 
     rect rgb(230, 240, 255)
         Note over Graph,Ext: DISCOVER
-        Graph  ->> Tools  : linkedin_search(discovery_config, icp)
-        Tools  ->> Ext    : LinkedIn API
-        Ext   -->> Tools  : raw results
+        Graph  ->> Tools  : linkedin_search / web_search / directory_search
+        Tools  ->> Ext    : search APIs
+        Ext   -->> Tools  : raw URL results
         Tools  ->> Tools  : deduplicate by URL
-        Tools -->> Graph  : [RawLead ×N]
+        Tools -->> Graph  : [Link ×N]
+        Graph  ->> DB     : INSERT links ×N
         Graph  ->> DB     : write lead.discovered events ×N
     end
 
-    rect rgb(230, 255, 237)
-        Note over Graph,LLM: RESEARCH (parallel ×N)
-        par per lead
-            Graph ->> Tools : scrape_page(lead.url)
-            Tools ->> Ext   : HTTP GET
-            Ext  -->> Tools : page text
-            Graph ->> Tools : find_contact(url, icp.roles)
-            Tools ->> Ext   : LinkedIn / web search
-            Ext  -->> Tools : contact details
-            Graph ->> Tools : enrich_lead(raw_lead, icp)
-            Tools ->> LLM   : summarise company + role signals
-            LLM  -->> Tools : EnrichedLead
+    rect rgb(220, 240, 220)
+        Note over Graph,Ext: SCRAPE
+        par per link
+            Graph  ->> Tools : scrape_page(link.url)
+            Tools  ->> Ext   : HTTP GET
+            Ext   -->> Tools : page HTML → cleaned text
+            Graph  ->> DB    : UPDATE links SET page_text=...
         end
-        Graph  ->> DB : write lead.enriched events ×N
+    end
+
+    rect rgb(240, 235, 255)
+        Note over Graph,LLM: IDENTIFY LEADS
+        par per link
+            Graph  ->> Tools  : identify_leads(link, icp)
+            Tools  ->> LLM    : extract company entities from page text
+            LLM   -->> Tools  : [{company_name, domain, industry, ...} ×M]
+            Graph  ->> DB     : INSERT leads (stage=prospect) ×M
+            Graph  ->> DB     : write lead.identified events ×M
+        end
+        Tools -->> Graph : [Lead ×M]
+    end
+
+    rect rgb(230, 255, 237)
+        Note over Graph,LLM: RESEARCH (parallel ×M)
+        par per lead
+            Graph ->> Tools : enrich_lead(lead, icp)
+            Tools ->> LLM   : summarise company + append signals
+            LLM  -->> Tools : updated Lead (stage=research)
+            Graph ->> DB    : UPDATE leads
+        end
+        Graph  ->> DB : write lead.researched events ×M
         Graph  ->> DB : checkpoint
     end
 
     rect rgb(255, 245, 220)
-        Note over Graph,LLM: QUALIFY (parallel ×N)
-        par per enriched lead
-            Graph ->> Tools : qualify_lead(enriched_lead, qualification_config)
+        Note over Graph,LLM: QUALIFY
+        par per lead
+            Graph ->> Tools : qualify_lead(lead, qualification_config)
             Tools ->> LLM   : score against rubric criteria
-            LLM  -->> Tools : QualifiedLead | RejectedLead
+            LLM  -->> Tools : Lead (stage=qualification | rejected)
+            Graph ->> DB    : UPDATE leads
         end
         Graph  ->> DB : write lead.qualified / lead.rejected events
         Graph  ->> DB : checkpoint
     end
 
+    rect rgb(255, 240, 230)
+        Note over Graph,Ext: CONTACTS
+        par per qualified lead
+            Graph ->> Tools : find_all_contacts(lead, target_roles)
+            Tools ->> Ext   : LinkedIn / Apollo / web search
+            Ext  -->> Tools : [Contact ×K]
+            Graph ->> DB    : INSERT contacts ×K
+            Graph ->> DB    : UPDATE leads SET stage='contacts'
+        end
+        Graph  ->> DB : write contacts.found events
+        Graph  ->> DB : checkpoint
+    end
+
     rect rgb(245, 230, 255)
-        Note over Graph,Slack: OUTREACH
-        Graph  ->> Tools : detect_language(enriched_lead)
-        Tools  ->> LLM   : infer language from lead profile
-        LLM   -->> Tools : language code
-        Graph  ->> Tools : draft_outreach(qualified_lead, outreach_config)
-        Tools  ->> LLM   : generate personalised message
-        LLM   -->> Tools : OutreachDraft
-        Graph  ->> Tools : send_email / send_whatsapp
-        Tools  ->> Ext   : Gmail API / WhatsApp API
-        Ext   -->> Tools : sent_at, external_message_id
-        Graph  ->> DB    : write message.sent event + config_snapshot
+        Note over Graph,Slack: OUTREACH (per approved contact)
+        Graph  ->> Tools : detect_language(lead)
+        par per approved contact
+            Graph  ->> Tools : draft_outreach(lead, contact, outreach_config)
+            Tools  ->> LLM   : generate personalised message
+            LLM   -->> Tools : OutreachDraft
+            Graph  ->> Tools : send_email / send_whatsapp
+            Tools  ->> Ext   : Gmail API / WhatsApp API
+            Ext   -->> Tools : sent_at, external_message_id
+            Graph  ->> DB    : INSERT messages (status=sent)
+            Graph  ->> DB    : write message.sent event + config_snapshot
+        end
         Graph  ->> Slack : lead.outreach_started notification
         Graph  ->> DB    : checkpoint
     end
 
     rect rgb(255, 230, 230)
-        Note over Graph,Slack: FOLLOW-UP LOOP
-        loop until reply or max follow-ups
+        Note over Graph,Slack: CHECK REPLIES
+        loop until all leads at first_contact or no_contact
             Graph  ->> Tools : check_replies(campaign, outreach_config)
             Tools  ->> Ext   : Poll Gmail / WhatsApp
             Ext   -->> Tools : [Reply]
             Tools  ->> LLM   : classify sentiment
             LLM   -->> Tools : positive | neutral | negative
-            alt positive reply
-                Graph  ->> DB    : UPDATE lead stage='responded'
-                Graph  ->> DB    : write reply.received, handoff.triggered events
-                Graph  ->> Slack : handoff notification
+            alt positive reply from any contact
+                Graph  ->> DB    : UPDATE contacts SET outreach_stopped=true (siblings)
+                Graph  ->> DB    : UPDATE leads SET stage='first_contact'
+                Graph  ->> DB    : write reply.received, first_contact.triggered events
+                Graph  ->> Slack : first_contact notification
             else no reply and follow-ups remaining
                 Graph  ->> Tools : draft_outreach (follow-up template)
                 Tools  ->> LLM   : generate follow-up
                 Graph  ->> Tools : send_email / send_whatsapp
-                Graph  ->> DB    : write message.sent event
+                Graph  ->> DB    : INSERT messages (status=sent)
+            else max follow-ups exhausted
+                Graph  ->> DB    : UPDATE leads SET stage='no_contact'
+                Graph  ->> DB    : write lead.no_contact event
             end
         end
     end
@@ -373,17 +400,15 @@ sequenceDiagram
 
 ## Parallelism
 
-The `research` and `qualify` nodes process leads independently. LangGraph's `Send` API is used to fan out per-lead work and fan back in:
+The `research` node processes leads independently via LangGraph's `Send` API:
 
 ```python
-# After discover node:
+# After identify_leads node:
 def fan_out_research(state: AgentState) -> list[Send]:
-    return [Send("research_lead", {"lead": lead, "config": state["config"]}) for lead in state["raw_leads"]]
+    return [Send("research", {"lead": lead, "config": state["config"]}) for lead in state["leads"] if lead.stage == "prospect"]
 ```
 
-Each `research_lead` invocation processes one lead and returns `{"enriched_lead": EnrichedLead}`. The graph collector merges all results back into `state["enriched_leads"]`.
-
-Same pattern is applied to `qualify_lead` per enriched lead.
+Each `research` invocation returns `{"lead": updated_lead}`. The graph collector merges all results back into `state["leads"]`.
 
 ---
 

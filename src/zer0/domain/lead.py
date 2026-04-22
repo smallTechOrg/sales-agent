@@ -1,51 +1,28 @@
 """Lead pipeline domain models.
 
-Spec: spec/product/02-architecture.md — Domain models / Lead pipeline models
-Spec: spec/product/03-db-schema.md — leads table
+Spec: spec/product/07-data-model.md — leads table
+Spec: spec/product/10-agent-graph.md — AgentState
 """
 
 from __future__ import annotations
 
+from datetime import datetime
 from enum import Enum
 
 from pydantic import BaseModel, Field
 
 
 class LeadStage(str, Enum):
-    discovered = "discovered"
-    enriched = "enriched"
-    qualified = "qualified"
+    prospect = "prospect"
+    research = "research"
+    qualification = "qualification"
+    contacts = "contacts"
+    approval = "approval"
+    outreach = "outreach"
+    first_contact = "first_contact"
+    no_contact = "no_contact"
     rejected = "rejected"
-    approved = "approved"
-    outreach_active = "outreach_active"
-    responded = "responded"
     blocked = "blocked"
-
-
-class LeadSource(str, Enum):
-    linkedin = "linkedin"
-    web = "web"
-    directory = "directory"
-
-
-class RawLead(BaseModel):
-    id: str
-    campaign_id: str
-    tenant_id: str
-    name: str | None = None
-    company: str | None = None
-    url: str
-    source: LeadSource
-
-
-class EnrichedLead(RawLead):
-    company_summary: str | None = None
-    role_summary: str | None = None
-    recent_signals: list[str] = Field(default_factory=list)
-    detected_language: str | None = None  # ISO 639-1; set by detect_language tool
-    contact_email: str | None = None
-    contact_phone: str | None = None
-    contact_role: str | None = None
 
 
 class PerCriterionScore(BaseModel):
@@ -53,12 +30,25 @@ class PerCriterionScore(BaseModel):
     score: float  # 0–100
 
 
-class QualifiedLead(EnrichedLead):
-    score: float  # 0–100
-    per_criterion_scores: list[PerCriterionScore]
-    rationale: str
-
-
-class RejectedLead(EnrichedLead):
-    rejection_reason: str
-    per_criterion_scores: list[PerCriterionScore]
+class Lead(BaseModel):
+    id: str
+    tenant_id: str
+    campaign_id: str
+    link_id: str | None = None
+    stage: LeadStage = LeadStage.prospect
+    company_name: str | None = None
+    domain: str | None = None
+    industry: str | None = None
+    headcount_range: str | None = None
+    business_type: str | None = None
+    research_summary: str | None = None
+    signals: list[str] = Field(default_factory=list)
+    score: float | None = None
+    per_criterion_scores: list[PerCriterionScore] = Field(default_factory=list)
+    rationale: str | None = None
+    rejection_reason: str | None = None
+    detected_language: str | None = None  # ISO 639-1; set by detect_language tool
+    blocked_at: datetime | None = None
+    last_researched_at: datetime | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None

@@ -110,7 +110,28 @@ class CampaignRow(Base):
 
     tenant: Mapped[TenantRow] = relationship(back_populates="campaigns")
     offering: Mapped[OfferingRow] = relationship(back_populates="campaigns")
+    links: Mapped[list[LinkRow]] = relationship(back_populates="campaign")
     leads: Mapped[list[LeadRow]] = relationship(back_populates="campaign")
+
+
+# ---------------------------------------------------------------------------
+# links  (raw URLs discovered by the discover node)
+# ---------------------------------------------------------------------------
+
+class LinkRow(Base):
+    __tablename__ = "links"
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    tenant_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("tenants.id"), nullable=False, index=True)
+    campaign_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("campaigns.id"), nullable=False, index=True)
+    url: Mapped[str] = mapped_column(Text, nullable=False)
+    source: Mapped[str] = mapped_column(String(32), nullable=False)  # web | linkedin | directory
+    page_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    scraped_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False, default=_now)
+
+    campaign: Mapped[CampaignRow] = relationship(back_populates="links")
+    leads: Mapped[list[LeadRow]] = relationship(back_populates="link")
 
 
 # ---------------------------------------------------------------------------
@@ -123,29 +144,58 @@ class LeadRow(Base):
     id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
     tenant_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("tenants.id"), nullable=False, index=True)
     campaign_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("campaigns.id"), nullable=False, index=True)
-    stage: Mapped[str] = mapped_column(String(32), nullable=False, default="discovered")
-    name: Mapped[str | None] = mapped_column(Text, nullable=True)
-    company: Mapped[str | None] = mapped_column(Text, nullable=True)
-    url: Mapped[str] = mapped_column(Text, nullable=False)
-    source: Mapped[str] = mapped_column(String(32), nullable=False)
-    enriched_data: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    link_id: Mapped[str | None] = mapped_column(UUID(as_uuid=False), ForeignKey("links.id"), nullable=True, index=True)
+    stage: Mapped[str] = mapped_column(String(32), nullable=False, default="prospect")
+    company_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    domain: Mapped[str | None] = mapped_column(Text, nullable=True)
+    industry: Mapped[str | None] = mapped_column(Text, nullable=True)
+    headcount_range: Mapped[str | None] = mapped_column(Text, nullable=True)
+    business_type: Mapped[str | None] = mapped_column(Text, nullable=True)
+    research_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    signals: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     score: Mapped[float | None] = mapped_column(Numeric, nullable=True)
     per_criterion_scores: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     rationale: Mapped[str | None] = mapped_column(Text, nullable=True)
     rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     detected_language: Mapped[str | None] = mapped_column(String(8), nullable=True)
     blocked_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-    discovered_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-    contact_email: Mapped[str | None] = mapped_column(Text, nullable=True)
-    contact_phone: Mapped[str | None] = mapped_column(Text, nullable=True)
-    contact_role: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_researched_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False, default=_now)
     updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False, default=_now, onupdate=_now)
 
     campaign: Mapped[CampaignRow] = relationship(back_populates="leads")
+    link: Mapped[LinkRow | None] = relationship(back_populates="leads")
+    contacts: Mapped[list[ContactRow]] = relationship(back_populates="lead")
     messages: Mapped[list[MessageRow]] = relationship(back_populates="lead")
     replies: Mapped[list[ReplyRow]] = relationship(back_populates="lead")
     events: Mapped[list[EventRow]] = relationship(back_populates="lead")
+
+
+# ---------------------------------------------------------------------------
+# contacts  (individual people at a lead's company)
+# ---------------------------------------------------------------------------
+
+class ContactRow(Base):
+    __tablename__ = "contacts"
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    tenant_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("tenants.id"), nullable=False, index=True)
+    lead_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("leads.id"), nullable=False, index=True)
+    first_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    full_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    email: Mapped[str | None] = mapped_column(Text, nullable=True)
+    phone: Mapped[str | None] = mapped_column(Text, nullable=True)
+    role: Mapped[str | None] = mapped_column(Text, nullable=True)
+    linkedin_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    approved_for_outreach: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    outreach_stopped: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False, default=_now)
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False, default=_now, onupdate=_now)
+
+    lead: Mapped[LeadRow] = relationship(back_populates="contacts")
+    messages: Mapped[list[MessageRow]] = relationship(back_populates="contact")
+    replies: Mapped[list[ReplyRow]] = relationship(back_populates="contact")
 
 
 # ---------------------------------------------------------------------------
@@ -159,6 +209,7 @@ class MessageRow(Base):
     tenant_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("tenants.id"), nullable=False, index=True)
     campaign_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("campaigns.id"), nullable=False, index=True)
     lead_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("leads.id"), nullable=False, index=True)
+    contact_id: Mapped[str | None] = mapped_column(UUID(as_uuid=False), ForeignKey("contacts.id"), nullable=True, index=True)
     channel: Mapped[str] = mapped_column(String(32), nullable=False)
     subject: Mapped[str | None] = mapped_column(Text, nullable=True)
     body: Mapped[str] = mapped_column(Text, nullable=False)
@@ -172,6 +223,7 @@ class MessageRow(Base):
     updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False, default=_now, onupdate=_now)
 
     lead: Mapped[LeadRow] = relationship(back_populates="messages")
+    contact: Mapped[ContactRow | None] = relationship(back_populates="messages")
     replies: Mapped[list[ReplyRow]] = relationship(back_populates="message")
 
 
@@ -185,6 +237,7 @@ class ReplyRow(Base):
     id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
     tenant_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("tenants.id"), nullable=False, index=True)
     lead_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("leads.id"), nullable=False, index=True)
+    contact_id: Mapped[str | None] = mapped_column(UUID(as_uuid=False), ForeignKey("contacts.id"), nullable=True, index=True)
     message_id: Mapped[str | None] = mapped_column(UUID(as_uuid=False), ForeignKey("messages.id"), nullable=True, index=True)
     channel: Mapped[str] = mapped_column(String(32), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
@@ -193,6 +246,7 @@ class ReplyRow(Base):
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False, default=_now)
 
     lead: Mapped[LeadRow] = relationship(back_populates="replies")
+    contact: Mapped[ContactRow | None] = relationship(back_populates="replies")
     message: Mapped[MessageRow | None] = relationship(back_populates="replies")
 
 
@@ -207,6 +261,7 @@ class EventRow(Base):
     tenant_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("tenants.id"), nullable=False, index=True)
     campaign_id: Mapped[str | None] = mapped_column(UUID(as_uuid=False), ForeignKey("campaigns.id"), nullable=True, index=True)
     lead_id: Mapped[str | None] = mapped_column(UUID(as_uuid=False), ForeignKey("leads.id"), nullable=True, index=True)
+    contact_id: Mapped[str | None] = mapped_column(UUID(as_uuid=False), ForeignKey("contacts.id"), nullable=True, index=True)
     event_type: Mapped[str] = mapped_column(Text, nullable=False)
     payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     config_snapshot: Mapped[dict | None] = mapped_column(JSONB, nullable=True)

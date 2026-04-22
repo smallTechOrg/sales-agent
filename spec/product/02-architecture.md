@@ -57,7 +57,7 @@ flowchart LR
         Runner["runner.run_campaign()\nentry point for all agent runs"]
         Graph["LangGraph StateGraph\n(compiled once at startup)"]
         ConfigRes["ConfigResolver\nmerges Campaign → Offering\n→ ResolvedConfig"]
-        Tools["Tools\nlinkedin_search · web_search\ndirectory_search · scrape_page\nfind_contact · enrich_lead\nqualify_lead · detect_language\ndraft_outreach · send_email\nsend_whatsapp · check_replies\npost_slack_event"]
+        Tools["Tools\nlinkedin_search · web_search\ndirectory_search · scrape_page\nidentify_leads · enrich_lead\nqualify_lead · find_all_contacts\ndetect_language · draft_outreach\nsend_email · send_whatsapp\ncheck_replies · post_slack_event"]
         Obs["Observability\nstructlog · Slack poster\naudit event writer"]
         LLMClient["LLM client\nProvider factory\ntool JSON schemas"]
         Prompts["Prompts\nmarkdown templates\nloaded at startup"]
@@ -224,17 +224,16 @@ Tenant ID is a non-nullable foreign key on every database table. The API enforce
 | `QualificationConfig`  | rubric_criteria ([{name, description, weight}]), score_threshold, disqualifying_signals               |
 | `OutreachConfig`       | channels_enabled, tone, language_default, templates ({first_touch, follow_up_1..N}), follow_up_count, follow_up_spacing_days, send_schedule |
 
-### Lead pipeline models
+### Pipeline models
 
-| Model             | Key fields                                                                                   |
-| ----------------- | -------------------------------------------------------------------------------------------- |
-| `RawLead`         | id, campaign_id, name, company, url, source                                                  |
-| `EnrichedLead`    | RawLead + company_summary, role_summary, recent_signals, detected_language                   |
-| `QualifiedLead`   | EnrichedLead + score, per_criterion_scores, rationale                                        |
-| `RejectedLead`    | EnrichedLead + rejection_reason, per_criterion_scores                                        |
-| `OutreachDraft`   | lead_id, channel, subject (email only), body, personalisation_notes, config_snapshot         |
-| `SentMessage`     | OutreachDraft + sent_at, message_id, sequence_number                                         |
-| `Reply`           | lead_id, channel, content, received_at, sentiment                                            |
+| Model             | Key fields                                                                                                                                                     |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Link`            | id, tenant_id, campaign_id, url, source (web/linkedin/directory), page_text, scraped_at                                                                        |
+| `Lead`            | id, tenant_id, campaign_id, link_id, stage, company_name, domain, industry, headcount_range, business_type, research_summary, signals, score, per_criterion_scores, rationale, rejection_reason, detected_language, blocked_at, last_researched_at |
+| `Contact`         | id, tenant_id, lead_id, first_name, last_name, email, phone, role, seniority_level, decision_maker_score, approved_for_outreach, outreach_stopped               |
+| `OutreachDraft`   | lead_id, contact_id, channel, subject (email only), body, personalisation_notes, config_snapshot                                                               |
+| `SentMessage`     | OutreachDraft + sent_at, message_id, sequence_number                                                                                                           |
+| `Reply`           | lead_id, contact_id, channel, content, received_at, sentiment                                                                                                  |
 
 `config_snapshot` on `OutreachDraft` records the exact `ResolvedConfig` used to generate that message — so the audit log shows not just what was sent but what configuration drove it.
 
@@ -252,31 +251,40 @@ Tenant ID is a non-nullable foreign key on every database table. The API enforce
 └──────────┬───────────┘
            │
 ┌──────────▼───────────┐
-│      discover        │  ← ResolvedConfig.discovery_config → [RawLead]
+│      discover        │  ← ResolvedConfig.discovery_config → [Link] (raw URLs)
+└──────────┬───────────┘
+           │
+┌──────────▼───────────┐
+│    scrape_links       │  ← fetch + clean page text for each Link
+└──────────┬───────────┘
+           │
+┌──────────▼───────────┐
+│   identify_leads     │  ← LLM extracts company entities from page text → [Lead] per link
 └──────────┬───────────┘
            │  (per lead)
 ┌──────────▼───────────┐
-│      research        │  ← ResolvedConfig.icp signals → EnrichedLead
+│      research        │  ← cumulative: append signals/summary → Lead.research_summary, Lead.signals
 └──────────┬───────────┘
            │
 ┌──────────▼───────────┐
-│      qualify         │  ← ResolvedConfig.qualification_config → QualifiedLead | RejectedLead
+│      qualify         │  ← ResolvedConfig.qualification_config → Lead(stage=qualification|rejected)
 └──────────┬───────────┘
            │
 ┌──────────▼───────────┐
-│   approval gate      │  ← ResolvedConfig.approval_mode → auto-pass or wait for human
-└──────────┬───────────┘
-           │  (approved leads only)
-┌──────────▼───────────┐
-│      outreach        │  ← ResolvedConfig.outreach_config → OutreachDraft → SentMessage
+│    get_contacts      │  ← find decision-makers → [Contact] per lead
 └──────────┬───────────┘
            │
 ┌──────────▼───────────┐
-│   follow-up loop     │  ← waits follow_up_spacing_days, sends up to follow_up_count times
+│   approval_gate      │  ← operator selects contacts → Contact.approved_for_outreach
 └──────────┬───────────┘
-           │  (on positive reply)
+           │  (approved contacts only)
 ┌──────────▼───────────┐
-│      handoff         │  ← flag Responded, post Slack alert, stop outreach
+│      outreach        │  ← draft + send per approved Contact; follow-up until reply or exhausted
+└──────────┬───────────┘
+           │  (on positive reply from any contact)
+┌──────────▼───────────┐
+│   check_replies      │  ← positive reply → outreach_stopped=true on all other contacts
+│                      │    → Lead(stage=first_contact)
 └──────────────────────┘
 ```
 
@@ -286,21 +294,22 @@ Every node reads only from `ResolvedConfig`. No node has hardcoded behaviour.
 
 ## Tools
 
-| Tool                | Input                      | Output                          | Notes                                              |
-| ------------------- | -------------------------- | ------------------------------- | -------------------------------------------------- |
-| `linkedin_search`   | DiscoveryConfig + ICP      | [RawLead]                       | Searches LinkedIn for matching companies/contacts. |
-| `web_search`        | DiscoveryConfig + ICP      | [RawLead]                       | Keyword search via Tavily/Serper.                  |
-| `directory_search`  | DiscoveryConfig + ICP      | [RawLead]                       | IndiaMART/Justdial fallback.                       |
-| `scrape_page`       | URL                        | cleaned page text               | Extracts readable content.                         |
-| `find_contact`      | company URL + ICP.roles    | name, email, phone, role        | Finds decision-maker contact details.              |
-| `enrich_lead`       | RawLead + ICP              | EnrichedLead                    | Combines scrape + LLM summarisation.               |
-| `qualify_lead`      | EnrichedLead + QualificationConfig | QualifiedLead \| RejectedLead | Scores per rubric criteria via LLM.      |
-| `detect_language`   | EnrichedLead               | language code                   | Infers best outreach language from lead profile.   |
-| `draft_outreach`    | QualifiedLead + OutreachConfig | OutreachDraft               | Generates personalised message via LLM.            |
-| `send_email`        | OutreachDraft + tenant creds | SentMessage                   | Sends via tenant's Google Workspace (OAuth).       |
-| `send_whatsapp`     | OutreachDraft + tenant creds | SentMessage                   | Sends via WhatsApp Business API.                   |
-| `check_replies`     | Campaign + OutreachConfig  | [Reply]                         | Polls for replies; classifies sentiment.           |
-| `post_slack_event`  | event payload + tenant webhook | ack                         | Posts structured event to tenant's Slack.          |
+| Tool                | Input                              | Output                          | Notes                                                                                 |
+| ------------------- | ---------------------------------- | ------------------------------- | ------------------------------------------------------------------------------------- |
+| `linkedin_search`   | DiscoveryConfig + ICP              | [Link]                          | Searches LinkedIn for matching pages/profiles.                                        |
+| `web_search`        | DiscoveryConfig + ICP              | [Link]                          | Keyword search via Tavily/Serper; returns URLs.                                       |
+| `directory_search`  | DiscoveryConfig + ICP              | [Link]                          | IndiaMART/Justdial fallback.                                                          |
+| `scrape_page`       | URL                                | cleaned page text               | Extracts readable content; populates `link.page_text`.                                |
+| `identify_leads`    | Link (with page_text) + ICP        | [Lead]                          | LLM call: extracts company entities from page. One link → 1..N leads.                 |
+| `enrich_lead`       | Lead + ICP                         | Lead (signals/summary appended) | LLM summarisation; APPENDS to existing `signals` and `research_summary`.              |
+| `qualify_lead`      | Lead + QualificationConfig         | Lead (stage updated)            | Scores against rubric via LLM; sets `score`, `rationale`, `stage`.                    |
+| `find_all_contacts` | Lead + ICP.target_roles            | [Contact]                       | Finds decision-makers at the company; returns list of Contact objects.                |
+| `detect_language`   | Lead                               | language code                   | Infers best outreach language from lead profile.                                      |
+| `draft_outreach`    | Lead + Contact + OutreachConfig    | OutreachDraft                   | Generates personalised message via LLM for a specific contact.                        |
+| `send_email`        | OutreachDraft + tenant creds       | SentMessage                     | Sends via tenant's Google Workspace (OAuth).                                          |
+| `send_whatsapp`     | OutreachDraft + tenant creds       | SentMessage                     | Sends via WhatsApp Business API.                                                      |
+| `check_replies`     | Campaign + OutreachConfig          | [Reply]                         | Polls for replies; classifies sentiment; sets `outreach_stopped` on sibling contacts. |
+| `post_slack_event`  | event payload + tenant webhook     | ack                             | Posts structured event to tenant's Slack.                                             |
 
 Every tool receives its behavioural parameters from `ResolvedConfig`. No tool has hardcoded logic for a specific tenant or offering.
 
@@ -310,13 +319,13 @@ Every tool receives its behavioural parameters from `ResolvedConfig`. No tool ha
 
 All prompts are markdown templates with `{{variable}}` placeholders. Variables are injected from `ResolvedConfig` at runtime — the offering's value proposition, pain points, ICP, and tone all flow into prompt context dynamically.
 
-| File                       | Purpose                                                             |
-| -------------------------- | ------------------------------------------------------------------- |
-| `prompts/planner.md`       | Top-level planning node.                                            |
-| `prompts/researcher.md`    | Research and enrichment node.                                       |
-| `prompts/qualifier.md`     | Qualification scoring. Rubric criteria are injected from config.   |
-| `prompts/outreach.md`      | Message drafting. Tone, value prop, pain points injected from config. |
-| `prompts/language.md`      | Language detection and selection.                                   |
+| File                       | Purpose                                                                           |
+| -------------------------- | --------------------------------------------------------------------------------- |
+| `prompts/researcher.md`    | Research and enrichment node. Appends signals to existing summary.                |
+| `prompts/identifier.md`    | Company entity extraction. Given page text + ICP, outputs list of company names.  |
+| `prompts/qualifier.md`     | Qualification scoring. Rubric criteria are injected from config.                  |
+| `prompts/outreach.md`      | Message drafting. Tone, value prop, pain points injected from config.              |
+| `prompts/language.md`      | Language detection and selection.                                                  |
 
 ---
 
@@ -324,15 +333,17 @@ All prompts are markdown templates with `{{variable}}` placeholders. Variables a
 
 Postgres. Key tables:
 
-| Table         | Notes                                                             |
-| ------------- | ----------------------------------------------------------------- |
-| `tenants`     | One row per tenant.                                               |
-| `offerings`   | One or many per tenant.                                           |
-| `campaigns`   | One or many per offering.                                         |
-| `leads`       | All pipeline stages stored in one table with a `stage` column.   |
-| `messages`    | All sent messages, across all channels and sequence positions.    |
-| `replies`     | All inbound replies.                                              |
-| `events`      | Append-only audit log — every agent action and config snapshot.   |
+| Table      | Notes                                                                                          |
+| ---------- | ---------------------------------------------------------------------------------------------- |
+| `tenants`  | One row per tenant.                                                                            |
+| `offerings`| One or many per tenant.                                                                        |
+| `campaigns`| One or many per offering.                                                                      |
+| `links`    | Raw discovery URLs — one row per URL per campaign run. Page text stored here.                  |
+| `leads`    | One company entity per campaign. Single row with a `stage` column tracks the full lifecycle.   |
+| `contacts` | Individual people within a lead's company. Populated after qualification.                      |
+| `messages` | All drafted and sent messages, per contact, per channel.                                       |
+| `replies`  | All inbound replies.                                                                           |
+| `events`   | Append-only audit log — every agent action and config snapshot.                                |
 
 Soft deletes only. `tenant_id` is non-nullable on every table.
 
@@ -342,7 +353,7 @@ Soft deletes only. `tenant_id` is non-nullable on every table.
 
 Every tool call writes an `Event` to the `events` table and posts to the tenant's Slack webhook. The event includes the action type, the lead ID, the outcome, and a snapshot of the `ResolvedConfig` values that drove the decision.
 
-Key event types: `lead.discovered`, `lead.enriched`, `lead.qualified`, `lead.rejected`, `approval.pending`, `approval.granted`, `message.drafted`, `message.sent`, `reply.received`, `handoff.triggered`, `config.resolved`.
+Key event types: `lead.discovered`, `lead.identified`, `lead.researched`, `lead.qualified`, `lead.rejected`, `contacts.found`, `approval.pending`, `approval.granted`, `message.drafted`, `message.sent`, `reply.received`, `first_contact.triggered`, `config.resolved`.
 
 ---
 

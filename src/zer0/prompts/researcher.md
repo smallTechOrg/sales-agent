@@ -13,8 +13,7 @@ Your job is to read a company's web page and extract structured information that
 ## Instructions
 Read the page text provided and return a JSON object with exactly these keys:
 
-- **company_summary** (string): 2–3 sentences describing what the company does, its size (if detectable), and its stage.
-- **role_summary** (string): 1–2 sentences about the contact's role and seniority. If no contact is provided, describe the buying persona you would target at this company.
+- **company_summary** (string): 2–3 sentences describing what the company does, its size (if detectable), and its stage. Focus on new information not already captured in previous research.
 - **recent_signals** (list of strings): up to 5 recent signals from the page that indicate buying intent, growth, or pain — e.g. hiring for a role, announcing a new product, fundraising, a blog post about a problem your product solves.
 
 Return only valid JSON. No markdown fences, no commentary.

@@ -1,18 +1,13 @@
 """AgentState — LangGraph state schema.
 
-Spec: spec/product/05-agent-graph.md — State schema
+Spec: spec/product/10-agent-graph.md — State schema
 """
 
 from __future__ import annotations
 
 from typing import TypedDict
 
-from zer0.domain import (
-    EnrichedLead,
-    QualifiedLead,
-    RawLead,
-    RejectedLead,
-)
+from zer0.domain import Contact, Lead, Link
 from zer0.domain.config import ResolvedConfig
 from zer0.domain.outreach import OutreachDraft, Reply, SentMessage
 
@@ -25,16 +20,17 @@ class AgentState(TypedDict, total=False):
     config: ResolvedConfig
 
     # --- Discovery ---
-    raw_leads: list[RawLead]
+    links: list[Link]
 
-    # --- Per-lead pipeline ---
-    enriched_leads: list[EnrichedLead]
-    qualified_leads: list[QualifiedLead]
-    rejected_leads: list[RejectedLead]
+    # --- Pipeline ---
+    leads: list[Lead]
+
+    # --- Contacts ---
+    contacts: list[Contact]
 
     # --- Approval gate ---
-    pending_approval_lead_ids: list[str]
-    approved_lead_ids: list[str]
+    pending_approval_contact_ids: list[str]
+    approved_contact_ids: list[str]
 
     # --- Outreach ---
     outreach_drafts: list[OutreachDraft]

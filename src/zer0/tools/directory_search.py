@@ -7,7 +7,13 @@ Output: list[RawLead]
 
 from __future__ import annotations
 
-from zer0.domain import DiscoveryConfig, ICP, RawLead
+from zer0.domain import DiscoveryConfig, ICP
+
+
+class _UrlResult:
+    """Minimal container so node_discover can call getattr(r, 'url', None)."""
+    def __init__(self, url: str) -> None:
+        self.url = url
 
 
 def directory_search(
@@ -16,7 +22,7 @@ def directory_search(
     icp: ICP,
     tenant_id: str,
     campaign_id: str,
-) -> list[RawLead]:
+) -> list[_UrlResult]:
     """Search IndiaMART / Justdial directories for matching companies.
 
     TODO: Integrate with IndiaMART API and/or Justdial scraping.
