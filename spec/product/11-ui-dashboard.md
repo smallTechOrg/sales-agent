@@ -54,6 +54,7 @@ Every screen maps to one or more API endpoints. The underlying DB operations are
 | Screen | API equivalent |
 |---|---|
 | Dashboard home | `GET /api/v1/tenants` + health summary |
+| Leads view (global per-tenant) | `GET /api/v1/leads?all_campaigns` |
 | Tenant detail / pipeline view | `GET /api/v1/leads?campaign_id=...` |
 | Tenant onboarding wizard | `POST /api/v1/tenants` → credentials → campaign |
 | Campaign builder | `POST /api/v1/campaigns` / `PUT /api/v1/campaigns/{id}` |
@@ -77,12 +78,14 @@ The first screen after login. Shows the operator a health summary and a list of 
 flowchart LR
     Login --> Dashboard
     Dashboard --> TenantDetail
+    Dashboard --> LeadsGlobal["Leads view"]
     Dashboard --> NewTenant["Onboarding wizard"]
     TenantDetail --> CampaignBuilder
     TenantDetail --> LeadPipeline
     TenantDetail --> ApprovalQueue
-    CampaignBuilder --> OfferingEditor
+    LeadsGlobal --> LeadDetail
     LeadPipeline --> LeadDetail
+    CampaignBuilder --> OfferingEditor
     LeadDetail --> MessagesView
     LeadDetail --> EventsLog
     Dashboard --> OperatorSettings
@@ -146,26 +149,95 @@ flowchart LR
 ```
 
 - **Filter bar:** stage, date range, source (LinkedIn / web / directory), score range.
-- **Lead row:** company name, domain, stage badge, score (if qualified), last activity timestamp.
-- **Trigger agent run button:** dispatches `POST /api/v1/campaigns/{id}/run` and shows a live progress indicator reading from `GET /api/v1/events?campaign_id=...`.
+- **Lead row:** company name, domain, **source badge** (🌐 web / 💼 linkedin / 📚 directory), stage badge, score (if qualified), last activity timestamp, **research freshness icon** (🟢 < 7 days / 🟡 7–30 days / 🔴 > 30 days).
+- **Lead row hover details:** contact count, message count, industry, headcount_range, detected_language code.
+- **Trigger agent run button:** dispatches `POST /api/v1/campaigns/{id}/run` and shows a **gated progress indicator** reading from `GET /api/v1/events?campaign_id=...` (see "Run progress indicator" below).
 
 Clicking a lead row opens the lead detail drawer.
 
 ---
 
+### Leads view (per-tenant, all campaigns)
+
+Cross-campaign view of all leads within a tenant. Accessible from the main dashboard sidebar as a first-class navigation item.
+
+- **Filter bar:** campaign (dropdown select), stage, date range, source (LinkedIn / web / directory), score range.
+- **Lead row:** company name, domain, **source badge**, stage badge, score (if qualified), **last activity** (relative time), **research freshness icon**.
+- **Lead row hover details:** campaign name, contact count, message count, industry, headcount_range, detected_language code.
+- **Read-only view:** Operators perform approval and message editing in the approval queue and campaign pipeline contexts, not here.
+
+Clicking a lead row opens the lead detail drawer (same detail view as pipeline).
+
+---
+
 ### Lead detail
 
-Shows the full enrichment data, qualification scores, and message history for a single lead.
+Shows the full enrichment data, qualification scores, and message history for a single lead. All data is comprehensive and organized chronologically or hierarchically.
 
 **Sections:**
 
-- **Profile:** `company_name`, `domain`, `industry`, `headcount_range`, `detected_language`, stage badge, score.
-- **Research:** `research_summary` (cumulative), `signals` (list of buying-intent signals), `last_researched_at`.
-- **Qualification scores:** per-criterion breakdowns + total score + rationale. Only shown when stage ≥ `qualification`.
-- **Contacts:** list of `Contact` rows for this lead. Each contact shows name, role, email, seniority level, `decision_maker_score`, approval status, and `outreach_stopped` flag. Operator can set `approved_for_outreach` per contact from this view. Only shown when stage ≥ `contacts`.
-- **Messages:** chronological list of sent/pending messages with channel badge, status, and body preview. Expandable to full body. Each row shows the contact the message targeted.
-- **Replies:** inbound replies with associated contact and sentiment badge (`positive` / `neutral` / `negative`).
-- **Events:** filtered event log for this lead.
+- **Profile:** `company_name`, `domain`, `industry`, `headcount_range`, **`detected_language`** (ISO 639-1 code, e.g. "en", "es", with flag emoji 🇺🇸), stage badge, score (if qualified), **source badge** (web / linkedin / directory from `links.source` via `lead.link_id`).
+
+- **Research timeline:** 
+  - **Last researched:** `last_researched_at` formatted as relative time ("2 days ago") with absolute timestamp on hover.
+  - **Freshness badge:** 🟢 Fresh (< 7 days) / 🟡 Stale (7–30 days) / 🔴 Needs refresh (> 30 days).
+  - **Research run count:** "Researched N times" with earliest and latest timestamps.
+
+- **Research data:** `research_summary` (cumulative text, formatted as readable paragraphs). **Signals list:** bulleted list of detected buying-intent signals, shown as `[signal_name] (detected: relative timestamp, source: criteria_name)`.
+
+- **Qualification scores:** 
+  - **Visibility:** Only shown when stage ≥ `qualification`.
+  - **Breakdown table:** columns for criterion name, weight (e.g., 20%), score (e.g., 85/100), and benchmark (optional).
+  - **Total score:** Large, prominent display of aggregate score + threshold (e.g., "Score: 78/100 vs. Threshold: 70 ✓ PASS").
+  - **Rationale:** LLM-generated reasoning text explaining the score.
+
+- **Rejection info (if stage = rejected):** 
+  - **Alert box:** Red background with dismissible close button.
+  - **Content:** `rejection_reason` text + timestamp when rejected.
+  - **Option:** "Unblock & retarget" button (future — not v1).
+
+- **Contacts:** 
+  - **Visibility:** Only shown when stage ≥ `contacts`.
+  - **List:** Each contact shows name, role, email, seniority level, `decision_maker_score`, approval status (approved / pending / not approved), and `outreach_stopped` flag.
+  - **Actions:** Operator can set `approved_for_outreach` per contact from this view (checkbox or toggle).
+
+- **Messages:** Chronological list of sent/pending messages with channel badge (📧 email / 💬 WhatsApp), status badge, and body preview (truncated at 100 chars). Expandable to full body. Each row shows the contact the message targeted.
+
+- **Replies:** Inbound replies with associated contact, sentiment badge (😊 positive / 😐 neutral / 😞 negative), message body, and received timestamp (relative time).
+
+- **Events log:** Complete chronological audit trail of all state transitions and agent actions for this lead (e.g., "Researched by agent at 2:30 PM", "Score updated to 78", "Contact approved by operator at 3:15 PM").
+
+---
+
+#### Run progress indicator (gated view)
+
+When `POST /api/v1/campaigns/{id}/run` is triggered, the UI displays a live progress bar showing only the **agent-driven decision stages**:
+
+1. **Discover** — Finding new prospects via LinkedIn, web, directory sources.
+2. **Scrape** — Downloading and parsing page content.
+3. **Identify** — Extracting company entities from content.
+4. **Research** — Enriching companies with signals and summaries.
+5. **Qualify** — Scoring against ICP rubric.
+
+**Rationale:** Rejection happens at the qualification gate. Rejected leads require no further action from the agent. Qualified leads then require operator approval, which is not an agent-driven stage. The progress bar is therefore scoped to the agent's autonomous decision-making phases only.
+
+**UI pattern:** 
+- Horizontal flow chart with 5 circles/boxes in sequence.
+- **Current stage:** highlighted in progress color (e.g., gold).
+- **Completed stages:** green checkmark.
+- **Future stages:** gray, dimmed.
+- **Error state:** red ✗ with error message banner.
+
+**Data source:** Real-time polling of `GET /api/v1/events?campaign_id=...&since=<timestamp>` every 2 seconds while a run is `status=running`.
+
+**Event mapping:**
+- `link.discovered` → Discover stage complete.
+- `link.scraped` → Scrape stage complete.
+- `lead.identified` → Identify stage complete.
+- `lead.researched` → Research stage complete.
+- `lead.qualified` or `lead.rejected` → Qualify stage complete (both outcomes mark stage done).
+
+**Completion:** When the final `lead.qualified` or `lead.rejected` event appears, mark Qualify as complete and auto-hide the progress bar after 2 seconds.
 
 ---
 
