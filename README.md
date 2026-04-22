@@ -47,7 +47,7 @@ sales-agent/
 ├── src/
 │   ├── zer0/
 │   │   ├── api/            # FastAPI routers — auth, tenants, offerings, campaigns,
-│   │   │                   #   leads, approvals, messages, events
+│   │   │                   #   leads, links, customers, approvals, messages, events
 │   │   ├── cli/            # Click CLI — zer0 version, tenant, campaign, leads, run
 │   │   ├── config/         # pydantic-settings (Settings) + ConfigResolver
 │   │   ├── db/             # SQLAlchemy 2.0 ORM models + session factory
@@ -162,7 +162,7 @@ pytest src/tests/unit/       # unit tests only
 pytest src/tests/integration # integration tests only
 ```
 
-82 tests across 8 phases. The test suite follows the phased model in [`spec/engineering/phases.md`](spec/engineering/phases.md) — each phase's tests must pass before the next phase's code is written.
+130 tests across 8 phases. The test suite follows the phased model in [`spec/engineering/phases.md`](spec/engineering/phases.md) — each phase's tests must pass before the next phase's code is written.
 
 ---
 

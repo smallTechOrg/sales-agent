@@ -27,6 +27,32 @@ def _new_id() -> str:
     return str(uuid.uuid4())
 
 
+def _extract_complete_objects(text: str) -> list[dict]:
+    """Walk the text char-by-char and return every complete JSON object found.
+
+    Used to recover partial arrays when the LLM response is truncated.
+    """
+    objects: list[dict] = []
+    depth = 0
+    start: int | None = None
+    for i, ch in enumerate(text):
+        if ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0 and start is not None:
+                try:
+                    obj = json.loads(text[start : i + 1])
+                    if isinstance(obj, dict):
+                        objects.append(obj)
+                except (json.JSONDecodeError, ValueError):
+                    pass
+                start = None
+    return objects
+
+
 def identify_leads(
     *,
     link: Link,
@@ -56,16 +82,27 @@ def identify_leads(
 
     raw = llm.complete(system=system, user=user)
 
+    text = raw.strip()
+    text = re.sub(r"^```(?:json)?\s*", "", text)
+    text = re.sub(r"\s*```$", "", text)
+
+    entries: list[dict] = []
     try:
-        text = raw.strip()
-        text = re.sub(r"^```(?:json)?\s*", "", text)
-        text = re.sub(r"\s*```$", "", text)
-        entries: list[dict] = json.loads(text)
-        if not isinstance(entries, list):
-            entries = []
+        parsed = json.loads(text)
+        if isinstance(parsed, list):
+            entries = parsed
     except (json.JSONDecodeError, ValueError) as exc:
-        log.warning("identify_leads.parse_error", link_id=link.id, error=str(exc), raw=raw[:200])
-        entries = []
+        # LLM response was truncated mid-array — recover all complete objects.
+        entries = _extract_complete_objects(text)
+        if entries:
+            log.warning(
+                "identify_leads.parse_partial",
+                link_id=link.id,
+                error=str(exc),
+                recovered=len(entries),
+            )
+        else:
+            log.warning("identify_leads.parse_error", link_id=link.id, error=str(exc), raw=raw[:200])
 
     leads: list[Lead] = []
     for entry in entries:

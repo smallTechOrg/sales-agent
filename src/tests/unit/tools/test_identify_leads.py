@@ -201,6 +201,36 @@ class TestIdentifyLeadsMalformedResponse:
         )
         assert result == []
 
+    def test_truncated_array_recovers_complete_objects(self) -> None:
+        """LLM truncated mid-array: complete objects before the cut must be recovered."""
+        truncated = (
+            '```json\n'
+            '[\n'
+            '  {"company_name": "Alzheimer\'s Association", "domain": "alz.org", '
+            '"industry": "Non-Profit", "headcount_range": null, "business_type": "B2C"},\n'
+            '  {"company_name":'  # truncated here
+        )
+        result = identify_leads(
+            link=_make_link(),
+            icp=_make_icp(),
+            llm=_make_llm(truncated),
+            config=_make_config(),
+        )
+        assert len(result) == 1
+        assert result[0].company_name == "Alzheimer's Association"
+        assert result[0].domain == "alz.org"
+
+    def test_truncated_array_mid_first_object_returns_empty_list(self) -> None:
+        """If no complete object exists before the cut, return empty (no crash)."""
+        truncated = '[\n  {"company_name": "Partial'
+        result = identify_leads(
+            link=_make_link(),
+            icp=_make_icp(),
+            llm=_make_llm(truncated),
+            config=_make_config(),
+        )
+        assert result == []
+
 
 class TestIdentifyLeadsEntryFiltering:
     def test_entry_missing_company_name_is_skipped(self) -> None:

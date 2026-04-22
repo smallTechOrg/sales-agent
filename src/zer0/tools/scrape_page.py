@@ -25,18 +25,27 @@ _HEADERS: dict[str, str] = {
 }
 
 
+_HTML_CONTENT_TYPES = ("text/html", "text/plain", "application/xhtml")
+
+
 def scrape_page(url: str) -> str:
     """Fetch a URL and return cleaned readable text.
 
     Strips navigation, scripts, styles. Returns best-effort plain text.
+    Returns empty string for non-HTML content types (PDFs, binary files, etc.)
+    to prevent NUL bytes from crashing PostgreSQL TEXT column writes.
     Raises httpx.HTTPStatusError on 4xx/5xx after following redirects.
     """
     with httpx.Client(headers=_HEADERS, timeout=15.0, follow_redirects=True) as client:
         response = client.get(url)
     response.raise_for_status()
 
+    content_type = response.headers.get("content-type", "")
+    if not any(content_type.startswith(ct) for ct in _HTML_CONTENT_TYPES):
+        return ""
+
     soup = BeautifulSoup(response.text, "html.parser")
     for tag in soup(["script", "style", "nav", "footer", "header"]):
         tag.decompose()
 
-    return " ".join(soup.get_text(separator=" ").split())
+    return " ".join(soup.get_text(separator=" ").split()).replace("\x00", "")
