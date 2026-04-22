@@ -535,19 +535,6 @@ Setting `blocked: true` sets `blocked_at` and stops all outreach. `stage` allows
 
 **Errors:** `400 INVALID_TRANSITION` if the requested stage transition is not valid.
 
-### `POST /leads/{id}/trigger-followup`
-
-Send an immediate follow-up outside the normal sequence timing.
-
-**Request:** empty body.
-
-**Response `202`:**
-```json
-{ "data": { "message": "Follow-up queued." }, "error": null }
-```
-
-**Errors:** `409 CONFLICT` if the lead is not in `outreach_active` stage.
-
 #### Lead object shape
 
 ```json

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from fastapi import APIRouter, BackgroundTasks, Depends
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
@@ -128,22 +128,3 @@ def patch_lead(
         setattr(row, field, value)
     session.add(row)
     return ok(_row_to_out(row))
-
-
-@router.post("/{lead_id}/trigger-followup", status_code=202)
-def trigger_followup(
-    lead_id: str,
-    background_tasks: BackgroundTasks,
-    tenant_id: str = Depends(get_current_tenant_id),
-    session: Session = Depends(get_session),
-):
-    """Manually trigger a follow-up for a specific lead."""
-    row = _get_or_404(lead_id, tenant_id, session)
-    campaign_id = row.campaign_id
-
-    def _run():
-        from zer0.graph.runner import run_campaign
-        run_campaign(campaign_id=campaign_id, tenant_id=tenant_id)
-
-    background_tasks.add_task(_run)
-    return ok({"triggered": True, "lead_id": lead_id})
