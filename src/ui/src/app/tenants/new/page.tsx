@@ -34,7 +34,7 @@ const EMPTY_CREDS: CredentialsState = {
 
 export default function NewTenantPage() {
   const router = useRouter();
-  const { addKnownTenant, setActiveTenant } = useTenant();
+  const { setActiveTenant } = useTenant();
 
   const [step, setStep] = useState(0);
   const [tenantName, setTenantName] = useState("");
@@ -118,7 +118,6 @@ export default function NewTenantPage() {
         },
       });
 
-      addKnownTenant(tenantId);
       setActiveTenant(tenantId);
       router.push(`/${tenantId}`);
     } catch (e) {

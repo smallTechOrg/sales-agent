@@ -11,12 +11,11 @@ export default function TenantLayout({
   params: Promise<{ tenantId: string }>;
 }) {
   const { tenantId } = use(params);
-  const { setActiveTenant, addKnownTenant } = useTenant();
+  const { setActiveTenant } = useTenant();
 
   useEffect(() => {
     setActiveTenant(tenantId);
-    addKnownTenant(tenantId);
-  }, [tenantId, setActiveTenant, addKnownTenant]);
+  }, [tenantId, setActiveTenant]);
 
   return <>{children}</>;
 }

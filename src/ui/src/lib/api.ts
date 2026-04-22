@@ -241,6 +241,8 @@ export const api = {
   health: () => get<HealthData>("/api/v1/health", null),
 
   // Tenants (creation — no tenant ID required)
+  listTenants: () =>
+    get<TenantData[]>("/api/v1/tenants", null),
   createTenant: (name: string) =>
     post<TenantData>("/api/v1/tenants", null, { name }),
 

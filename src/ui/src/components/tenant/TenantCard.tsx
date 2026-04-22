@@ -7,10 +7,9 @@ import type { TenantData } from "@/lib/api";
 
 interface TenantCardProps {
   tenant: TenantData;
-  onRemove: (id: string) => void;
 }
 
-export function TenantCard({ tenant, onRemove }: TenantCardProps) {
+export function TenantCard({ tenant }: TenantCardProps) {
   return (
     <div className="flex items-center gap-4 rounded-lg bg-slate-900 border border-slate-800 px-4 py-3 hover:border-slate-700 transition-colors">
       <Link
@@ -26,22 +25,15 @@ export function TenantCard({ tenant, onRemove }: TenantCardProps) {
           cooldown {tenant.retargeting_cooldown_days}d
         </div>
       </Link>
-      <button
-        onClick={() => onRemove(tenant.id)}
-        className="text-slate-600 hover:text-red-400 text-xs"
-        title="Remove from UI (does not delete from DB)"
-      >
-        ✕
-      </button>
     </div>
   );
 }
 
-export function TenantCardLoading({ id }: { id: string }) {
+export function TenantCardLoading() {
   return (
     <div className="flex items-center gap-4 rounded-lg bg-slate-900 border border-slate-800 px-4 py-3">
       <Spinner size="sm" />
-      <span className="text-slate-500 font-mono text-xs">{id}</span>
+      <span className="text-slate-500 text-xs">Loading…</span>
     </div>
   );
 }

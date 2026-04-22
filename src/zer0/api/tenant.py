@@ -28,6 +28,17 @@ class TenantCreate(BaseModel):
     name: str
 
 
+@tenants_router.get("")
+def list_tenants(session: Session = Depends(get_session)):
+    rows = (
+        session.query(TenantRow)
+        .filter(TenantRow.deleted_at.is_(None))
+        .order_by(TenantRow.created_at)
+        .all()
+    )
+    return ok([TenantOut(id=t.id, name=t.name, retargeting_cooldown_days=t.retargeting_cooldown_days, default_approval_mode=t.default_approval_mode) for t in rows])
+
+
 @tenants_router.post("")
 def create_tenant(
     body: TenantCreate,
