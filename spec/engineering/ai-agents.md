@@ -15,7 +15,7 @@ This is **Zer0** — an autonomous multi-tenant sales agent platform. Before wri
 
 ---
 
-## 1a. Session-start checklist — do this first, every time
+## 1a. Session-start checklist & Before Every Reply — do this first, every time
 
 Every time an AI agent starts or resumes a session in this repo, before reading any task description or writing any code, it **must** execute the following steps in order:
 
@@ -111,6 +111,18 @@ Rule: [`spec/engineering/spec-driven.md`](spec-driven.md)
 - If there is no spec file for what you are building, create one.
 - Spec and code changes travel in the same commit.
 - Drift between spec and code is a bug. The spec wins.
+
+### Spec files must always be read in full — never skipped, never summarised
+
+Spec files in `spec/product/` and `spec/engineering/` are **never** treated as background context to be abbreviated in any summary or session handoff. When any spec file is relevant to a change:
+
+1. **Read it in full** with `read_file` before touching any code. Reading "enough of it" is not sufficient.
+2. **Never act on a conversation summary's description of a spec file.** Summaries lose precision. Re-read the actual file.
+3. **Every change to schema, API shape, graph behaviour, or a product concept must land in the spec first, in the same session, before the first code edit.**
+
+Failure mode this blocks: an agent reads a partial summary of the data-model spec, writes a migration and ORM model, and the spec never gets updated — leaving the authoritative description out of date with no record of the decision.
+
+The spec is the contract. Code that was written without a spec change is unreviewed by definition — there is no authoritative description of what it is supposed to do.
 
 ---
 

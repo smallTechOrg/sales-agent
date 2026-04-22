@@ -86,20 +86,38 @@ erDiagram
         TIMESTAMPTZ deleted_at
     }
     links {
-        UUID        id            PK
-        UUID        tenant_id     FK
-        UUID        campaign_id   FK
+        UUID        id              PK
+        UUID        tenant_id       FK
+        UUID        campaign_id     FK
         TEXT        url
         TEXT        source
         TEXT        page_text
         TIMESTAMPTZ scraped_at
+        TIMESTAMPTZ identified_at
         TIMESTAMPTZ created_at
+    }
+    customers {
+        UUID        id               PK
+        UUID        tenant_id        FK
+        TEXT        domain
+        TEXT        company_name
+        TEXT        industry
+        TEXT        headcount_range
+        TEXT        business_type
+        TEXT        research_summary
+        JSONB       signals
+        TEXT        notes
+        TIMESTAMPTZ first_seen_at
+        TIMESTAMPTZ last_enriched_at
+        TIMESTAMPTZ created_at
+        TIMESTAMPTZ updated_at
     }
     leads {
         UUID        id                   PK
         UUID        tenant_id            FK
         UUID        campaign_id          FK
         UUID        link_id              FK
+        UUID        customer_id          FK
         TEXT        stage
         TEXT        company_name
         TEXT        domain
@@ -177,6 +195,7 @@ erDiagram
     tenants    ||--o{ offerings  : "has"
     tenants    ||--o{ campaigns  : "owns"
     tenants    ||--o{ links      : "scopes"
+    tenants    ||--o{ customers  : "knows"
     tenants    ||--o{ leads      : "scopes"
     tenants    ||--o{ contacts   : "scopes"
     tenants    ||--o{ messages   : "scopes"
@@ -185,6 +204,7 @@ erDiagram
     offerings  ||--o{ campaigns  : "has"
     campaigns  ||--o{ links      : "discovers"
     links      ||--o{ leads      : "surfaces"
+    customers  ||--o{ leads      : "aggregates"
     leads      ||--o{ contacts   : "has"
     leads      ||--o{ messages   : "receives"
     leads      ||--o{ replies    : "generates"
@@ -198,6 +218,9 @@ erDiagram
 - `tenant_id` is the first filter in every query; it appears on every table.
 - A `link` belongs to exactly one campaign; one link page can surface multiple leads (one per identified company).
 - A `lead` belongs to exactly one campaign; if the same company appears in two campaigns they have two `lead` rows.
+- A `customer` belongs to one tenant and is keyed on `(tenant_id, domain)` — one row per company, tenant-wide. Multiple leads (across multiple campaigns) can reference the same customer. The customer record accumulates knowledge cumulatively: `research_summary` and `signals` are appended on every agent run; humans can patch `company_name`, `industry`, and `notes` directly.
+- `links.identified_at` is `NULL` until `node_identify_leads` processes the link. A `NULL` value means the link has not yet been run through the identify step and is eligible for retry.
+- `leads.customer_id` is nullable; set by `node_identify_leads` when a customer row is upserted for the lead's domain.
 - A `contact` belongs to exactly one lead. If the same person appears in two campaigns they have two `contact` rows.
 - `contact_id` on messages and replies is nullable — messages drafted before contact discovery omit it.
 - `events` is append-only (no UPDATE, no DELETE, no soft-delete). Rows accumulate forever.
@@ -340,9 +363,10 @@ Raw discovery results — one row per URL found during a campaign run. A single 
 | `campaign_id`| UUID        | NOT NULL, FK → campaigns.id  |                                                   |
 | `url`        | TEXT        | NOT NULL                     |                                                   |
 | `source`     | link_source | NOT NULL                     | `web`, `linkedin`, `directory`.                   |
-| `page_text`  | TEXT        |                              | Full scraped body. NULL = not yet scraped or failed. |
-| `scraped_at` | TIMESTAMPTZ |                              | NULL = not yet scraped.                           |
-| `created_at` | TIMESTAMPTZ | NOT NULL, DEFAULT now()      |                                                   |
+| `page_text`     | TEXT        |                              | Full scraped body. NULL = not yet scraped or failed.                                              |
+| `scraped_at`    | TIMESTAMPTZ |                              | NULL = not yet scraped.                                                                            |
+| `identified_at` | TIMESTAMPTZ |                              | NULL = link has not yet been processed by `node_identify_leads`. Set after identify step completes. |
+| `created_at`    | TIMESTAMPTZ | NOT NULL, DEFAULT now()      |                                                                                                    |
 
 **Indexes:** PK on `id`; `idx_links_campaign` on `(tenant_id, campaign_id)`; unique `idx_links_url` on `(tenant_id, campaign_id, url)` — deduplication guard.
 
@@ -358,6 +382,7 @@ One row per identified company per campaign. Progresses through `lead_stage` val
 | `tenant_id`          | UUID        | NOT NULL, FK → tenants.id    |                                                          |
 | `campaign_id`        | UUID        | NOT NULL, FK → campaigns.id  |                                                          |
 | `link_id`            | UUID        |                              | FK → links.id. The link from which this lead was identified. Nullable (manual leads). |
+| `customer_id`        | UUID        |                              | FK → customers.id. Set by `node_identify_leads` after customer upsert. Nullable until processed.  |
 | `stage`              | lead_stage  | NOT NULL, DEFAULT `prospect` |                                                          |
 | `company_name`       | TEXT        |                              | Extracted company name. Populated by `identify_leads`.   |
 | `domain`             | TEXT        |                              | Company website/domain. Populated by `identify_leads`.   |
@@ -378,7 +403,36 @@ One row per identified company per campaign. Progresses through `lead_stage` val
 
 No `deleted_at` — leads are permanently blocked via `blocked_at`. The audit trail must be preserved.
 
-**Indexes:** PK on `id`; `idx_leads_tenant` on `(tenant_id)`; `idx_leads_campaign_stage` on `(tenant_id, campaign_id, stage)` WHERE `blocked_at IS NULL`; `idx_leads_domain` on `(tenant_id, campaign_id, domain)` — deduplication guard.
+**Indexes:** PK on `id`; `idx_leads_tenant` on `(tenant_id)`; `idx_leads_campaign_stage` on `(tenant_id, campaign_id, stage)` WHERE `blocked_at IS NULL`; `idx_leads_domain` on `(tenant_id, campaign_id, domain)` — deduplication guard; `idx_leads_customer` on `(tenant_id, customer_id)`.
+
+---
+
+### `customers`
+
+Tenant-wide persistent knowledge base for every identified company. One row per `(tenant_id, domain)`. Knowledge is **cumulative**: `research_summary` and `signals` are appended on every agent run. Humans can patch `company_name`, `industry`, and `notes` via the API to supplement or correct agent research.
+
+This record outlives any single campaign — if the same company appears in two campaigns, both `lead` rows reference the same `customer` row.
+
+| Column             | Type        | Constraints                          | Notes                                                                                       |
+| ------------------ | ----------- | ------------------------------------ | ------------------------------------------------------------------------------------------- |
+| `id`               | UUID        | PK, NOT NULL                         |                                                                                             |
+| `tenant_id`        | UUID        | NOT NULL, FK → tenants.id            |                                                                                             |
+| `domain`           | TEXT        | NOT NULL                             | Company domain or normalized identifier; unique per tenant — see unique constraint below.   |
+| `company_name`     | TEXT        |                                      | Agent-extracted or human-corrected. Never overwritten by agent if already set by a human.    |
+| `industry`         | TEXT        |                                      | Same write rule as `company_name`.                                                          |
+| `headcount_range`  | TEXT        |                                      | e.g. `"10–50"`.                                                                          |
+| `business_type`    | TEXT        |                                      | e.g. `"smb"`, `"enterprise"`.                                                          |
+| `research_summary` | TEXT        |                                      | Cumulative LLM summary. New runs **append** a new section separated by `\n\n---\n`.    |
+| `signals`          | JSONB       |                                      | Deduplicated list of buying-intent signals across all campaigns and runs.                   |
+| `notes`            | TEXT        |                                      | Human-editable free-text field. Agent never writes here.                                    |
+| `first_seen_at`    | TIMESTAMPTZ |                                      | Timestamp of the first `lead.identified` event for any lead with this domain.               |
+| `last_enriched_at` | TIMESTAMPTZ |                                      | Updated whenever `node_research` appends new data.                                          |
+| `created_at`       | TIMESTAMPTZ | NOT NULL, DEFAULT now()              |                                                                                             |
+| `updated_at`       | TIMESTAMPTZ | NOT NULL, DEFAULT now()              |                                                                                             |
+
+**Constraints:** unique `uq_customers_tenant_domain` on `(tenant_id, domain)` — one record per company per tenant. Upsert on conflict updates `last_enriched_at` and appends signals; it does not overwrite user-editable text fields if they are already set.
+
+**Indexes:** PK on `id`; `idx_customers_tenant_domain` on `(tenant_id, domain)`.
 
 ---
 

@@ -71,6 +71,12 @@ flowchart LR
     root --> links["/links"]
     links --> link_list["GET  ?campaign_id="]
 
+    root --> customers["/customers"]
+    customers --> cust_list["GET"]
+    customers --> cust_id["/{id}"]
+    cust_id --> cust_get["GET"]
+    cust_id --> cust_patch["PATCH"]
+
     root --> approvals["/approvals"]
     approvals --> appr_list["GET"]
     approvals --> appr_qual["POST /leads/{lead_id}/qualify"]
@@ -536,24 +542,27 @@ Send an immediate follow-up outside the normal sequence timing.
   "id": "<uuid>",
   "tenant_id": "<uuid>",
   "campaign_id": "<uuid>",
+  "link_id": "<uuid | null>",
   "stage": "qualified",
-  "name": "<string>",
-  "company": "<string>",
-  "url": "<string>",
-  "source": "linkedin",
-  "enriched_data": { "...EnrichedLead fields..." },
+  "company_name": "<string | null>",
+  "domain": "<string | null>",
+  "industry": "<string | null>",
+  "headcount_range": "<string | null>",
+  "business_type": "<string | null>",
+  "research_summary": "<string | null>",
+  "signals": ["<string>"],
   "score": 82.5,
-  "per_criterion_scores": { "<criterion_name>": 85 },
-  "rationale": "<string>",
+  "per_criterion_scores": [{ "criterion": "<name>", "score": 85 }],
+  "rationale": "<string | null>",
   "rejection_reason": null,
   "detected_language": "en",
   "blocked_at": null,
-  "discovered_at": "<ISO 8601>",
-  "messages": [ "...see message object shape..." ],
   "created_at": "<ISO 8601>",
   "updated_at": "<ISO 8601>"
 }
 ```
+
+Contact data (email, role, phone) is available via `GET /contacts?lead_id=<id>`.
 
 ---
 
@@ -657,6 +666,98 @@ Approve or reject a drafted message. Optionally edit the body before approving.
   "status": "sent",
   "sent_at": "<ISO 8601>",
   "external_message_id": "<string>",
+  "created_at": "<ISO 8601>",
+  "updated_at": "<ISO 8601>"
+}
+```
+
+---
+
+## Links
+
+Raw discovery records — every URL found during a campaign run. Use this endpoint to inspect what the agent has discovered and whether it has been scraped and processed.
+
+### `GET /links`
+
+**Query params:** `campaign_id` (required), `cursor`, `limit`.
+
+**Response `200`:** list of link objects.
+
+#### Link object shape
+
+```json
+{
+  "id": "<uuid>",
+  "tenant_id": "<uuid>",
+  "campaign_id": "<uuid>",
+  "url": "<string>",
+  "source": "web",
+  "scraped_at": "<ISO 8601 | null>",
+  "identified_at": "<ISO 8601 | null>",
+  "created_at": "<ISO 8601>"
+}
+```
+
+`page_text` is **never** returned in API responses — it can be megabytes large. Use the events log to inspect the outcome of the identify step.
+
+`scraped_at: null` → page has not been fetched yet (or scrape failed).
+`identified_at: null` → link has been scraped but `node_identify_leads` has not yet processed it, or processing failed. Links with `identified_at: null` are eligible for retry.
+
+---
+
+## Customers
+
+Tenant-wide persistent company knowledge base. One record per `(tenant_id, domain)`. The agent writes here on every identify + research cycle; humans can patch `company_name`, `industry`, and `notes`.
+
+### `GET /customers`
+
+List all customer records for the tenant.
+
+**Query params:** `cursor`, `limit`.
+
+**Response `200`:** list of customer objects.
+
+### `GET /customers/{id}`
+
+**Response `200`:** single customer object with full research history.
+
+**Errors:** `404 NOT_FOUND`.
+
+### `PATCH /customers/{id}`
+
+Human-override fields only. The agent never calls this endpoint; it is exclusively for operator correction and annotation.
+
+**Accepted fields:**
+```json
+{
+  "company_name": "<string>",
+  "industry": "<string>",
+  "headcount_range": "<string>",
+  "business_type": "<string>",
+  "notes": "<string>"
+}
+```
+
+**Response `200`:** updated customer object.
+
+**Errors:** `404 NOT_FOUND`, `422 VALIDATION_ERROR`.
+
+#### Customer object shape
+
+```json
+{
+  "id": "<uuid>",
+  "tenant_id": "<uuid>",
+  "domain": "<string>",
+  "company_name": "<string | null>",
+  "industry": "<string | null>",
+  "headcount_range": "<string | null>",
+  "business_type": "<string | null>",
+  "research_summary": "<string | null>",
+  "signals": ["<string>"],
+  "notes": "<string | null>",
+  "first_seen_at": "<ISO 8601 | null>",
+  "last_enriched_at": "<ISO 8601 | null>",
   "created_at": "<ISO 8601>",
   "updated_at": "<ISO 8601>"
 }
