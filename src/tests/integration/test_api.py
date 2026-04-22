@@ -130,3 +130,188 @@ class TestApprovalDecisionShape:
         )
         assert resp.status_code == 422
 
+
+class TestLeadsEndpoints:
+    """GET/GET-by-id/PATCH /leads — spec: spec/product/09-api.md § /leads."""
+
+    # ------------------------------------------------------------------
+    # GET /leads
+    # ------------------------------------------------------------------
+
+    def test_list_leads_returns_200_with_correct_shape(self, app) -> None:
+        from datetime import datetime
+        from decimal import Decimal
+
+        from zer0.db.session import get_session
+
+        _NOW = datetime(2026, 4, 22, 9, 0, 0)
+
+        lead_mock = MagicMock()
+        lead_mock.id = "lead-uuid-1"
+        lead_mock.tenant_id = "t1"
+        lead_mock.campaign_id = "camp-1"
+        lead_mock.link_id = "link-1"
+        lead_mock.stage = "prospect"
+        lead_mock.company_name = "Test Corp"
+        lead_mock.domain = "test.com"
+        lead_mock.industry = "SaaS"
+        lead_mock.headcount_range = "50-200"
+        lead_mock.business_type = "B2B"
+        lead_mock.research_summary = "Summary text."
+        lead_mock.signals = ["hiring"]
+        lead_mock.score = Decimal("72.5")
+        lead_mock.per_criterion_scores = []
+        lead_mock.rationale = "Good fit."
+        lead_mock.rejection_reason = None
+        lead_mock.detected_language = "en"
+        lead_mock.blocked_at = None
+        lead_mock.created_at = _NOW
+        lead_mock.updated_at = _NOW
+
+        def _db_with_lead():
+            db = MagicMock()
+            db.query.return_value.filter.return_value.filter.return_value.filter.return_value.order_by.return_value.limit.return_value.all.return_value = [
+                lead_mock
+            ]
+            # Simpler chain used by list_leads when only tenant_id filter is applied
+            db.query.return_value.filter.return_value.order_by.return_value.limit.return_value.all.return_value = [
+                lead_mock
+            ]
+            yield db
+
+        app.dependency_overrides[get_session] = _db_with_lead
+        try:
+            with TestClient(app) as c:
+                resp = c.get(
+                    "/api/v1/leads",
+                    headers={"X-Tenant-ID": "t1"},
+                )
+            assert resp.status_code == 200
+            data = resp.json()["data"]
+            assert "items" in data
+            assert "next_cursor" in data
+            items = data["items"]
+            assert len(items) == 1
+            item = items[0]
+            # Current fields present
+            assert item["id"] == "lead-uuid-1"
+            assert item["company_name"] == "Test Corp"
+            assert item["domain"] == "test.com"
+            assert item["stage"] == "prospect"
+            assert item["signals"] == ["hiring"]
+            # Stale fields absent
+            assert "name" not in item
+            assert "company" not in item
+            assert "url" not in item
+            assert "source" not in item
+            assert "contact_email" not in item
+        finally:
+            app.dependency_overrides[get_session] = _no_db
+
+    def test_list_leads_without_tenant_header_returns_422(self, client) -> None:
+        resp = client.get("/api/v1/leads")
+        assert resp.status_code == 422
+
+    # ------------------------------------------------------------------
+    # GET /leads/{id}
+    # ------------------------------------------------------------------
+
+    def test_get_lead_not_found_returns_404(self, app) -> None:
+        from zer0.db.session import get_session
+
+        def _no_lead():
+            db = MagicMock()
+            db.query.return_value.filter.return_value.first.return_value = None
+            yield db
+
+        app.dependency_overrides[get_session] = _no_lead
+        try:
+            with TestClient(app) as c:
+                resp = c.get(
+                    "/api/v1/leads/non-existent-id",
+                    headers={"X-Tenant-ID": "t1"},
+                )
+            assert resp.status_code == 404
+        finally:
+            app.dependency_overrides[get_session] = _no_db
+
+    # ------------------------------------------------------------------
+    # PATCH /leads/{id}
+    # ------------------------------------------------------------------
+
+    def test_patch_lead_stage_returns_updated_lead(self, app) -> None:
+        from datetime import datetime
+        from decimal import Decimal
+
+        from zer0.db.session import get_session
+
+        _NOW = datetime(2026, 4, 22, 9, 0, 0)
+
+        lead_mock = MagicMock()
+        lead_mock.id = "lead-uuid-2"
+        lead_mock.tenant_id = "t1"
+        lead_mock.campaign_id = "camp-1"
+        lead_mock.link_id = None
+        lead_mock.stage = "prospect"
+        lead_mock.company_name = "Patch Corp"
+        lead_mock.domain = None
+        lead_mock.industry = None
+        lead_mock.headcount_range = None
+        lead_mock.business_type = None
+        lead_mock.research_summary = None
+        lead_mock.signals = None
+        lead_mock.score = None
+        lead_mock.per_criterion_scores = None
+        lead_mock.rationale = None
+        lead_mock.rejection_reason = None
+        lead_mock.detected_language = None
+        lead_mock.blocked_at = None
+        lead_mock.created_at = _NOW
+        lead_mock.updated_at = _NOW
+
+        def _db_with_lead():
+            db = MagicMock()
+            db.query.return_value.filter.return_value.first.return_value = lead_mock
+            yield db
+
+        app.dependency_overrides[get_session] = _db_with_lead
+        try:
+            with TestClient(app) as c:
+                resp = c.patch(
+                    "/api/v1/leads/lead-uuid-2",
+                    json={"stage": "qualified"},
+                    headers={"X-Tenant-ID": "t1"},
+                )
+            assert resp.status_code == 200
+        finally:
+            app.dependency_overrides[get_session] = _no_db
+
+    def test_patch_lead_not_found_returns_404(self, app) -> None:
+        from zer0.db.session import get_session
+
+        def _no_lead():
+            db = MagicMock()
+            db.query.return_value.filter.return_value.first.return_value = None
+            yield db
+
+        app.dependency_overrides[get_session] = _no_lead
+        try:
+            with TestClient(app) as c:
+                resp = c.patch(
+                    "/api/v1/leads/missing",
+                    json={"stage": "qualified"},
+                    headers={"X-Tenant-ID": "t1"},
+                )
+            assert resp.status_code == 404
+        finally:
+            app.dependency_overrides[get_session] = _no_db
+
+    def test_patch_lead_with_stale_contact_email_returns_422(self, client) -> None:
+        """contact_email is no longer a valid PATCH field — must be rejected."""
+        resp = client.patch(
+            "/api/v1/leads/some-id",
+            json={"contact_email": "hacker@example.com"},
+            headers={"X-Tenant-ID": "t1"},
+        )
+        assert resp.status_code == 422
+

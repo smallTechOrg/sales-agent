@@ -1,6 +1,6 @@
 """Leads endpoints.
 
-Spec: spec/product/04-api.md — /leads
+Spec: spec/product/09-api.md — /leads
 """
 
 from __future__ import annotations
@@ -8,7 +8,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from fastapi import APIRouter, BackgroundTasks, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
 from zer0.api._common import api_error, get_current_tenant_id, ok, paginated
@@ -21,35 +21,54 @@ class LeadOut(BaseModel):
     id: str
     tenant_id: str
     campaign_id: str
+    link_id: str | None
     stage: str
-    name: str | None
-    company: str | None
-    url: str
-    source: str
+    company_name: str | None
+    domain: str | None
+    industry: str | None
+    headcount_range: str | None
+    business_type: str | None
+    research_summary: str | None
+    signals: list | None
     score: float | None
+    per_criterion_scores: list | None
     rationale: str | None
     rejection_reason: str | None
     detected_language: str | None
-    contact_email: str | None
-    contact_role: str | None
+    blocked_at: datetime | None
     created_at: datetime
     updated_at: datetime
 
 
 class LeadPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     stage: str | None = None
-    contact_email: str | None = None
-    contact_role: str | None = None
+    blocked: bool | None = None
 
 
 def _row_to_out(l: LeadRow) -> LeadOut:
     return LeadOut(
-        id=l.id, tenant_id=l.tenant_id, campaign_id=l.campaign_id,
-        stage=l.stage, name=l.name, company=l.company, url=l.url, source=l.source,
+        id=l.id,
+        tenant_id=l.tenant_id,
+        campaign_id=l.campaign_id,
+        link_id=l.link_id,
+        stage=l.stage,
+        company_name=l.company_name,
+        domain=l.domain,
+        industry=l.industry,
+        headcount_range=l.headcount_range,
+        business_type=l.business_type,
+        research_summary=l.research_summary,
+        signals=l.signals,
         score=float(l.score) if l.score is not None else None,
-        rationale=l.rationale, rejection_reason=l.rejection_reason,
-        detected_language=l.detected_language, contact_email=l.contact_email,
-        contact_role=l.contact_role, created_at=l.created_at, updated_at=l.updated_at,
+        per_criterion_scores=l.per_criterion_scores,
+        rationale=l.rationale,
+        rejection_reason=l.rejection_reason,
+        detected_language=l.detected_language,
+        blocked_at=l.blocked_at,
+        created_at=l.created_at,
+        updated_at=l.updated_at,
     )
 
 
@@ -102,7 +121,10 @@ def patch_lead(
     session: Session = Depends(get_session),
 ):
     row = _get_or_404(lead_id, tenant_id, session)
-    for field, value in body.model_dump(exclude_none=True).items():
+    patch = body.model_dump(exclude_none=True)
+    if "blocked" in patch:
+        row.blocked_at = datetime.utcnow() if patch.pop("blocked") else None
+    for field, value in patch.items():
         setattr(row, field, value)
     session.add(row)
     return ok(_row_to_out(row))

@@ -47,7 +47,7 @@ def identify_leads(
         f"Page URL: {link.url}\n\n"
         f"Page text:\n{link.page_text[:8000]}\n\n"
         f"ICP target industries: {', '.join(icp.target_industries)}\n"
-        f"ICP target company size: {icp.min_company_size} – {icp.max_company_size} employees\n\n"
+        f"ICP target company size: {icp.company_size_range.min} – {icp.company_size_range.max} employees\n\n"
         "Return a JSON array of objects, one per company. Each object must have:\n"
         "  company_name (str), domain (str|null), industry (str|null),\n"
         "  headcount_range (str|null), business_type (str|null)\n"
