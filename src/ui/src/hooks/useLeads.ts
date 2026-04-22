@@ -11,6 +11,7 @@ interface UseLeadsParams {
 
 export function useLeads({ tenantId, campaignId, stage }: UseLeadsParams) {
   const [leads, setLeads] = useState<LeadData[]>([]);
+  const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -19,8 +20,8 @@ export function useLeads({ tenantId, campaignId, stage }: UseLeadsParams) {
     if (!tenantId) return;
     setLoading(true);
     api
-      .listLeads(tenantId, { campaign_id: campaignId, stage })
-      .then((page) => setLeads(page.items))
+      .listLeads(tenantId, { campaign_id: campaignId, stage, limit: 200 })
+      .then((page) => { setLeads(page.items); setHasMore(page.next_cursor !== null); })
       .catch((e) => setError(String(e)))
       .finally(() => setLoading(false));
   };
@@ -35,5 +36,5 @@ export function useLeads({ tenantId, campaignId, stage }: UseLeadsParams) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId, campaignId, stage]);
 
-  return { leads, loading, error, refresh: fetch };
+  return { leads, hasMore, loading, error, refresh: fetch };
 }

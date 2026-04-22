@@ -17,6 +17,7 @@ export function useEvents({
   poll = false,
 }: UseEventsParams) {
   const [events, setEvents] = useState<EventData[]>([]);
+  const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -25,8 +26,8 @@ export function useEvents({
     if (!tenantId) return;
     setLoading(true);
     api
-      .listEvents(tenantId, { campaign_id: campaignId, lead_id: leadId })
-      .then((page) => setEvents(page.items))
+      .listEvents(tenantId, { campaign_id: campaignId, lead_id: leadId, limit: 200 })
+      .then((page) => { setEvents(page.items); setHasMore(page.next_cursor !== null); })
       .catch((e) => setError(String(e)))
       .finally(() => setLoading(false));
   };
@@ -42,5 +43,5 @@ export function useEvents({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId, campaignId, leadId, poll]);
 
-  return { events, loading, error, refresh: fetch };
+  return { events, hasMore, loading, error, refresh: fetch };
 }

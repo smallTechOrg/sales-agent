@@ -131,16 +131,6 @@ function eventLabel(ev: EventData): string {
   return labels[ev.event_type] ?? ev.event_type;
 }
 
-function eventDetail(ev: EventData): string | null {
-  const p = ev.payload ?? {};
-  return (
-    (p.company_name as string) ??
-    (p.domain as string) ??
-    (p.url as string) ??
-    null
-  );
-}
-
 // ── Stats bar ──────────────────────────────────────────────────────────────
 function StatCard({ label, value }: { label: string; value: number }) {
   return (
@@ -166,12 +156,16 @@ export default function CampaignLeadPipelinePage({
 
   const isRunning = !!activeRunId;
 
-  const { leads, loading: leadsLoading, error: leadsError } = useLeads({ tenantId, campaignId, stage });
+  const { leads, hasMore: leadsHasMore, loading: leadsLoading, error: leadsError } = useLeads({ tenantId, campaignId, stage });
   const { links, loading: linksLoading, error: linksError } = useLinks({ tenantId, campaignId });
   const { runs, loading: runsLoading, error: runsError, refresh: refreshRuns } = useRuns(tenantId, campaignId);
   const activeRun = useRun(tenantId, campaignId, activeRunId);
   const { stats, refresh: refreshStats } = useCampaignStats(tenantId, campaignId, isRunning);
-  const { events, loading: eventsLoading } = useEvents({ tenantId, campaignId, poll: isRunning });
+  const { events, hasMore: eventsHasMore, loading: eventsLoading } = useEvents({ tenantId, campaignId, poll: isRunning });
+
+  // Index leads and links for activity enrichment
+  const leadMap = Object.fromEntries(leads.map((l) => [l.id, l]));
+  const linkMap = Object.fromEntries(links.map((l) => [l.id, l]));
 
   const handleRunNow = async () => {
     setTriggering(true);
@@ -261,9 +255,9 @@ export default function CampaignLeadPipelinePage({
             }`}
           >
             {t === "pipeline"
-              ? `Pipeline (${leads.length})`
+              ? `Pipeline (${stats?.total_leads ?? leads.length}${leadsHasMore ? "+" : ""})`
               : t === "activity"
-              ? `Activity (${events.length})`
+              ? `Activity (${events.length}${eventsHasMore ? "+" : ""})`
               : `Runs (${runs.length})`}
           </button>
         ))}
@@ -312,6 +306,11 @@ export default function CampaignLeadPipelinePage({
               Live — updating every 10 s
             </p>
           )}
+          {eventsHasMore && (
+            <p className="text-xs text-yellow-500 mb-3">
+              Showing first 200 events. Use the API for full history.
+            </p>
+          )}
           {eventsLoading && events.length === 0 ? (
             <div className="flex justify-center py-8"><Spinner /></div>
           ) : chronoEvents.length === 0 ? (
@@ -321,12 +320,68 @@ export default function CampaignLeadPipelinePage({
           ) : (
             <div className="relative border-l border-slate-800 ml-3 pl-6 flex flex-col gap-4">
               {chronoEvents.map((ev) => {
-                const detail = eventDetail(ev);
+                const p = ev.payload ?? {};
+                const lead = ev.lead_id ? leadMap[ev.lead_id] : null;
+                const companyName = (p.company_name as string) ?? lead?.company_name ?? null;
+                const domain = (p.domain as string) ?? lead?.domain ?? null;
+                const url = (p.url as string) ?? null;
+                const score = p.score != null ? Number(p.score) : lead?.score ?? null;
+
+                // Dot colour by event type
+                const dotColor =
+                  ev.event_type === "lead.rejected" ? "bg-red-500 border-red-600" :
+                  ev.event_type === "lead.qualified" ? "bg-green-500 border-green-600" :
+                  ev.event_type === "lead.identified" ? "bg-indigo-500 border-indigo-600" :
+                  ev.event_type === "lead.contacts_found" ? "bg-purple-500 border-purple-600" :
+                  ev.event_type === "link.discovered" ? "bg-cyan-500 border-cyan-600" :
+                  ev.event_type.startsWith("message.") ? "bg-yellow-500 border-yellow-600" :
+                  "bg-slate-700 border-slate-600";
+
                 return (
                   <div key={ev.id} className="relative">
-                    <span className="absolute -left-[1.625rem] top-1 w-2.5 h-2.5 rounded-full bg-slate-700 border border-slate-600" />
+                    <span className={`absolute -left-[1.625rem] top-1 w-2.5 h-2.5 rounded-full border ${dotColor}`} />
                     <div className="text-sm text-white font-medium">{eventLabel(ev)}</div>
-                    {detail && <div className="text-xs text-slate-400 mt-0.5">{detail}</div>}
+
+                    {/* Entity line: company + domain */}
+                    {(companyName || domain) && (
+                      <div className="text-xs text-slate-300 mt-0.5">
+                        {companyName && <span className="font-medium">{companyName}</span>}
+                        {companyName && domain && <span className="text-slate-500"> · </span>}
+                        {domain && <span className="font-mono text-slate-400">{domain}</span>}
+                      </div>
+                    )}
+
+                    {/* Source URL for link events */}
+                    {url && (
+                      <div className="text-xs text-slate-500 mt-0.5 truncate max-w-sm">
+                        <a href={url} target="_blank" rel="noopener noreferrer" className="hover:text-indigo-400">{url}</a>
+                      </div>
+                    )}
+
+                    {/* Rejection reason */}
+                    {ev.event_type === "lead.rejected" && (lead?.rejection_reason || lead?.rationale) && (
+                      <div className="mt-1 text-xs text-red-300 bg-red-900/20 rounded px-2 py-1">
+                        {lead.rejection_reason ?? lead.rationale}
+                      </div>
+                    )}
+
+                    {/* Score for qualified / rejected */}
+                    {(ev.event_type === "lead.qualified" || ev.event_type === "lead.rejected") && score != null && (
+                      <div className="text-xs text-slate-500 mt-0.5">Score: <span className="text-slate-300">{score}</span></div>
+                    )}
+
+                    {/* Contacts count */}
+                    {ev.event_type === "lead.contacts_found" && p.count != null && (
+                      <div className="text-xs text-slate-400 mt-0.5">{p.count as number} contact{(p.count as number) !== 1 ? "s" : ""} found</div>
+                    )}
+
+                    {/* Source URL the lead was extracted from (lead.identified has link_id) */}
+                    {ev.event_type === "lead.identified" && p.link_id && linkMap[p.link_id as string] && (
+                      <div className="text-xs text-slate-500 mt-0.5 truncate max-w-sm">
+                        From: <a href={linkMap[p.link_id as string].url} target="_blank" rel="noopener noreferrer" className="font-mono hover:text-indigo-400">{linkMap[p.link_id as string].url}</a>
+                      </div>
+                    )}
+
                     <div className="text-xs text-slate-600 mt-0.5">
                       {new Date(ev.created_at).toLocaleTimeString()}
                     </div>
