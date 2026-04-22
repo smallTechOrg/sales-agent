@@ -14,7 +14,7 @@
 | Data models        | `pydantic>=2.8`                      |
 | Settings / secrets | `pydantic-settings>=2.4`             |
 | Agent orchestration| `langgraph>=0.2`                     |
-| LLM client         | `anthropic>=0.40` (default)          |
+| LLM client         | `google-genai>=1.0`                  |
 | CLI                | `click>=8.1` + `rich>=13.7`          |
 | HTTP               | `httpx>=0.27`                        |
 | Structured logging | `structlog>=24.1`                    |
@@ -22,7 +22,7 @@
 | Database ORM       | `sqlalchemy>=2.0` (sync, psycopg3)   |
 | Migrations         | `alembic>=1.13`                      |
 | Scheduler          | `apscheduler>=3.10`                  |
-| Search             | `tavily-python>=0.3` (web search)    |
+| Search             | `tavily-python>=0.3` (Tavily web search, optional key), `duckduckgo-search>=6.0` (no key required) |
 
 ## What NOT to use
 

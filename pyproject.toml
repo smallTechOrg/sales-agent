@@ -3,16 +3,37 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "astra"
+name = "zer0"
 version = "0.1.0"
-description = "Astra — spec-driven agent. See spec/ for the source of truth."
+description = "Zer0 — autonomous multi-tenant sales agent platform. See spec/ for the source of truth."
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "Proprietary" }
 authors = [{ name = "Small Tech" }]
 
 dependencies = [
-    # defined by spec/engineering/tech-stack.md — populate once product spec is written
+    # spec/engineering/tech-stack.md
+    "pydantic>=2.8",
+    "pydantic-settings>=2.4",
+    "langgraph>=0.2",
+    "google-genai>=1.0",
+    "click>=8.1",
+    "rich>=13.7",
+    "httpx>=0.27",
+    "structlog>=24.1",
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "sqlalchemy>=2.0",
+    "psycopg[binary]>=3.1",
+    "alembic>=1.13",
+    "apscheduler>=3.10",
+    "tavily-python>=0.3",
+    "ddgs>=0.1",
+    "beautifulsoup4>=4.12",
+    "google-api-python-client>=2.140",
+    "google-auth>=2.30",
+    "python-jose[cryptography]>=3.3",
+    "cryptography>=42.0",
 ]
 
 [project.optional-dependencies]
@@ -23,6 +44,9 @@ dev = [
     "pytest-asyncio>=0.23",
 ]
 
+[project.scripts]
+zer0 = "zer0.cli:main"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
@@ -30,7 +54,11 @@ where = ["src"]
 line-length = 100
 target-version = "py312"
 
+[tool.pytest.ini_options]
+testpaths = ["src/tests"]
+pythonpath = ["src"]
+
 [tool.mypy]
 python_version = "3.12"
 strict = true
-packages = ["astra"]
+packages = ["zer0"]

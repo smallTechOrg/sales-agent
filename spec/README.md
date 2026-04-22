@@ -11,11 +11,19 @@ The foundational rule — change the spec first, then code — lives in
 
 ## Product (`product/`)
 
+Read in order:
+
 1. [`product/01-vision.md`](product/01-vision.md) — what Zer0 is and is not
-2. [`product/02-architecture.md`](product/02-architecture.md) — components, abstractions, data flow, and the layered src structure
-3. [`product/03-db-schema.md`](product/03-db-schema.md) — full Postgres schema: tables, columns, types, constraints, indexes
-4. [`product/04-api.md`](product/04-api.md) — REST API contract: endpoints, request/response shapes, auth, error codes
-5. [`product/05-agent-graph.md`](product/05-agent-graph.md) — LangGraph design: state schema, nodes, edges, checkpointing
+2. [`product/02-architecture.md`](product/02-architecture.md) — components, abstractions, data flow, module dependency graph
+3. [`product/03-tenancy.md`](product/03-tenancy.md) — the multi-tenant model, isolation guarantees, credential lifecycle
+4. [`product/04-capabilities/`](product/04-capabilities/) — one file per discrete behaviour (discovery, enrichment, qualification, outreach, follow-up, reply handling)
+5. [`product/05-config.md`](product/05-config.md) — config hierarchy: env bootstrap → DB campaign config → `ResolvedConfig`
+6. [`product/06-cli.md`](product/06-cli.md) — CLI command surface (`zer0` command group)
+7. [`product/07-data-model.md`](product/07-data-model.md) — full PostgreSQL schema: tables, columns, constraints, indexes
+8. [`product/08-prompts.md`](product/08-prompts.md) — LLM prompt contracts, variable lists, validation
+9. [`product/09-api.md`](product/09-api.md) — REST API contract: endpoints, request/response shapes, auth, error codes
+10. [`product/10-agent-graph.md`](product/10-agent-graph.md) — LangGraph design: state schema, nodes, edges, checkpointing
+11. [`product/11-ui-dashboard.md`](product/11-ui-dashboard.md) — operator web UI: onboarding, pipeline monitoring, approval queue, campaign builder
 
 ## Engineering (`engineering/`)
 
@@ -23,6 +31,7 @@ Rules that govern how code gets written. Every rule applies everywhere unless
 its Scope line says otherwise.
 
 - [`engineering/spec-driven.md`](engineering/spec-driven.md) — the rule: spec first, code second
+- [`engineering/phases.md`](engineering/phases.md) — **phased implementation model**: 10 dependency-ordered phases, each with gate tests. Read before writing any code.
 - [`engineering/tech-stack.md`](engineering/tech-stack.md) — language, runtime pin, canonical libraries
 - [`engineering/code-style.md`](engineering/code-style.md) — structural conventions and patterns
 - [`engineering/secret-hygiene.md`](engineering/secret-hygiene.md) — how secrets enter, travel, and exit the system

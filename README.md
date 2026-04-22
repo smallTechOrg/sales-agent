@@ -1,136 +1,181 @@
-# Zer0 — autonomous sales agent
+# Zer0 — autonomous sales agent platform
 
-> A teaching repo for the **AI For Leaders: Building Agents from Scratch** workshop (v0.1).
->
-> Astra is a small, honest, production-shaped sales agent. It researches a lead, drafts a
-> personalized outreach email, and logs the activity — all by iterating on the classic agent
-> loop: **observe → plan → act → reflect**.
+Zer0 is a **multi-tenant autonomous sales agent** that runs the entire top-of-funnel pipeline — cold prospecting to first positive reply — without human intervention. Tenants configure everything via a web dashboard; the agent discovers, researches, qualifies, and outreaches on its own.
 
----
-
-## Why this repo exists
-
-The workshop promises: *"You leave with a running agent you can extend tomorrow."* This is that
-agent. It is intentionally:
-
-- **Tiny** — fewer than ~600 lines of Python in `src/`.
-- **Typed** — Pydantic models at every boundary; your LLM can't hand you mush.
-- **Observable** — every node, every tool call is traced.
-- **Replaceable** — swap Claude for another model, swap SQLite for Postgres, without touching
-  the graph.
-
-We chose **LangGraph** because it makes the agent loop explicit instead of hiding it behind
-magic. You will see the nodes. You will see the edges. You will see the state.
+See [`spec/product/01-vision.md`](spec/product/01-vision.md) for the full product description.
 
 ---
 
 ## Quick start
 
 ```bash
-# 1. Python 3.12 (uses .tool-versions, asdf-friendly)
-python --version
+# 1. Python 3.12 (pinned in .tool-versions, asdf-friendly)
+python --version  # should print 3.12.x
 
-# 2. Install
+# 2. Create and activate the virtual environment
+# Option A — direnv (recommended, auto-activates on cd):
+direnv allow
+# Option B — manually:
+python -m venv .venv && source .venv/bin/activate
+
+# 3. Install
 pip install -e ".[dev]"
 
-# 3. Configure
+# 4. Configure — copy the example and fill in required values
 cp .env.example .env
-# ...then paste your ANTHROPIC_API_KEY into .env
+# Required: ZER0_DATABASE_URL, ZER0_GEMINI_API_KEY, ZER0_TAVILY_API_KEY,
+#           ZER0_JWT_SECRET, ZER0_CREDENTIAL_ENCRYPTION_KEY
 
-# 4. Run
-zer0 run --lead demo
+# 5. Run database migrations
+alembic upgrade head
+
+# 6. Start the API server
+# Note: macOS with Xcode installed uses port 8000 (CoreSimulator).
+# Use port 8001 to avoid the conflict.
+uvicorn zer0.api:app --reload --port 8001
+
+# 7. Or run the agent directly via the CLI
+zer0 campaign run <campaign-id>
 ```
-
-You should see the agent plan, call three tools, reflect, and finish — all in the terminal,
-all traced.
 
 ---
 
 ## Repo layout
 
 ```
-zer0/
-├── src/zer0/
-│   ├── cli/            # Click-based CLI entrypoint (`zer0 run`, `zer0 leads`, ...)
-│   ├── config/         # pydantic-settings — env + YAML
-│   ├── domain/         # Lead, Email, Activity, Research — the nouns of the business
-│   ├── llm/            # Claude client + tool schema generation
-│   ├── tools/          # research_lead, draft_email, log_to_crm
-│   ├── graph/          # LangGraph: state + nodes + the compiled agent
-│   ├── memory/         # short-term + long-term (checkpointer)
-│   ├── prompts/        # system + planner + reflector prompts (markdown)
-│   └── observability/  # structured logs + trace helpers
-├── tests/              # pytest — unit + integration
-├── spec/               # product + tech docs (spec-driven style)
+sales-agent/
+├── src/
+│   ├── zer0/
+│   │   ├── api/            # FastAPI routers — auth, tenants, offerings, campaigns,
+│   │   │                   #   leads, links, customers, approvals, messages, events
+│   │   ├── cli/            # Click CLI — zer0 version, tenant, campaign, leads, run
+│   │   ├── config/         # pydantic-settings (Settings) + ConfigResolver
+│   │   ├── db/             # SQLAlchemy 2.0 ORM models + session factory
+│   │   ├── domain/         # Pure Python domain models (no ORM, no I/O)
+│   │   │                   #   config, lead, outreach — the nouns of the business
+│   │   ├── graph/          # LangGraph StateGraph — state, nodes, edges, agent
+│   │   ├── llm/            # Configurable LLM client + prompt loader
+│   │   ├── observability/  # structlog configuration + write_event() + Slack webhook
+│   │   ├── prompts/        # Markdown prompt templates with {{ variable }} injection
+│   │   └── tools/          # Agent tools — discovery, research, qualify, outreach …
+│   ├── tests/
+│   │   ├── unit/           # per-module unit tests (phases 1–7)
+│   │   └── integration/    # FastAPI TestClient integration tests (phase 8)
+│   └── ui/                 # Next.js 15 operator dashboard (React 19, TypeScript, Tailwind 4)
+│       └── src/app/        # App Router — tenants, campaigns, leads, messages, events, approvals
+├── alembic/            # database migrations
+├── spec/               # single source of truth — read before any change
+├── reports/            # AI-agent planning reports
 ├── pyproject.toml
-├── .tool-versions
-├── CLAUDE.md           # how to work in this repo with Claude
+├── .tool-versions      # asdf — Python 3.12.x
+├── CLAUDE.md           # Claude Code entry point → spec/engineering/ai-agents.md
+├── AGENTS.md           # OpenAI/Codex entry point → spec/engineering/ai-agents.md
 └── README.md           # you are here
 ```
 
 ---
 
-## The agent, in one picture
+## The agent pipeline
 
 ```
-        ┌─────────┐
-        │  START  │  <── goal + lead_id
-        └────┬────┘
-             ▼
-        ┌─────────┐        conditional edge
-        │  PLAN   │ ──────────────────────────┐
-        └────┬────┘                           │
-             │ tool call                      │
-             ▼                                │
-       ┌───────────┐                          │
-       │ research_ │                          │
-       │ draft_   │─── result ──► back to PLAN│
-       │ log_to_  │                           │
-       └───────────┘                          │
-                                              ▼
-                                        ┌─────────┐
-                                        │ REFLECT │──► END
-                                        └─────────┘
+DISCOVER → RESEARCH → QUALIFY → OUTREACH → FOLLOW-UP
 ```
 
-- **PLAN** is the brain (the model, given a planner prompt).
-- **Tools** are the hands (`research_lead`, `draft_email`, `log_to_crm`).
-- **REFLECT** is the boss (verifies the goal was met).
+Each stage is a LangGraph node. Conditional edges route between stages or to an error handler.
+
+```
+START
+  └─► resolve_config ──── error ──► handle_error ──► END
+           │
+           ▼ ok
+        discover ───────── error ──► handle_error
+           │ no leads ──► END
+           ▼ leads
+        research
+           │
+           ▼
+        qualify ─────────── error ──► handle_error
+           │ no qualified ► END
+           ▼ qualified
+     approval_gate ─────── error ──► handle_error
+           │ pending ────► END (parked for human review)
+           │ no approved ► END
+           ▼ approved
+        outreach
+           │
+           ▼
+      follow_up_loop ◄──── active leads
+           │ all done
+           ▼
+          END
+```
+
+Full graph spec: [`spec/product/10-agent-graph.md`](spec/product/10-agent-graph.md)
 
 ---
 
-## Commands
+## CLI commands
 
-| Command                 | What it does                                           |
-| ----------------------- | ------------------------------------------------------ |
-| `zer0 run --lead X`    | Run the full agent against lead `X`.                   |
-| `zer0 leads`           | List the sample leads shipped with the repo.           |
-| `zer0 eval`            | Run the eval suite in `tests/evals`.                   |
-| `zer0 trace view <id>` | Pretty-print a stored trace.                           |
+| Command | What it does |
+| ------- | ------------ |
+| `zer0 version` | Print the installed version. |
+| `zer0 tenant create` | Create a new tenant. |
+| `zer0 tenant list` | List all tenants. |
+| `zer0 campaign run <id>` | Trigger an immediate agent run for a campaign. |
+| `zer0 campaign list` | List campaigns across all tenants. |
+| `zer0 leads list` | List leads with optional filters. |
 
----
-
-## Extending Zer0
-
-Four extensions you'll likely want in the first week:
-
-1. **Plug in your CRM.** Implement `zer0.tools.crm.get_lead` / `write_activity` against your
-   real backend. No graph changes needed.
-2. **Add a guardrail.** In `src/zer0/graph/nodes.py`, gate `log_to_crm` behind a human
-   approval. There's a `DRY_RUN` env flag wired for exactly this.
-3. **Swap the model.** `zer0.llm.client.get_client()` returns a provider-agnostic interface.
-4. **Write evals.** Add `(lead_id, expected)` pairs under `tests/evals/cases.jsonl` and run
-   `zer0 eval`.
+Full CLI spec: [`spec/product/06-cli.md`](spec/product/06-cli.md)
 
 ---
 
-## The 7-day plan
+## Dashboard (UI)
 
-See [`spec/07-seven-day-plan.md`](spec/07-seven-day-plan.md). It's the exact sequence of
-changes that turns this demo into a pilot in a week.
+The operator web dashboard lives in `src/ui/` — a Next.js 15 app that talks directly to the FastAPI server. The API must be running before opening the UI.
+
+```bash
+# Install (once)
+cd src/ui && npm install
+
+# Development — runs at http://localhost:3000
+npm run dev
+
+# Production build
+npm run build
+```
+
+If the API is not on `http://localhost:8000`, set `NEXT_PUBLIC_API_URL` in `src/ui/.env.local`:
+
+```
+NEXT_PUBLIC_API_URL=http://localhost:8000
+```
+
+Full UI spec: [`spec/product/11-ui-dashboard.md`](spec/product/11-ui-dashboard.md)
+
+---
+
+## Tests
+
+```bash
+pytest                       # run all tests
+pytest src/tests/unit/       # unit tests only
+pytest src/tests/integration # integration tests only
+```
+
+130 tests across 8 phases. The test suite follows the phased model in [`spec/engineering/phases.md`](spec/engineering/phases.md) — each phase's tests must pass before the next phase's code is written.
+
+---
+
+## Spec
+
+Everything that governs what Zer0 does and how it's built lives in `spec/`. Start here:
+
+- [`spec/README.md`](spec/README.md) — index of all spec files
+- [`spec/product/01-vision.md`](spec/product/01-vision.md) — what Zer0 is
+- [`spec/engineering/ai-agents.md`](spec/engineering/ai-agents.md) — rules for AI coding assistants
 
 ---
 
 ## License
 
-Proprietary. For workshop participants only.
+Proprietary.
