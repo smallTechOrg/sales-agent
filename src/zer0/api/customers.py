@@ -12,9 +12,16 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
 from zer0.api._common import api_error, get_current_tenant_id, ok, paginated
-from zer0.db import CustomerRow, get_session
+from zer0.db import CustomerRow, LeadRow, LinkLeadsRow, LinkRow, get_session
 
 router = APIRouter(prefix="/customers")
+
+
+class SourceLinkOut(BaseModel):
+    id: str
+    url: str
+    campaign_id: str | None
+    scraped_at: datetime | None
 
 
 class CustomerOut(BaseModel):
@@ -30,6 +37,7 @@ class CustomerOut(BaseModel):
     notes: str | None
     first_seen_at: datetime | None
     last_enriched_at: datetime | None
+    source_links: list[SourceLinkOut]
     created_at: datetime
     updated_at: datetime
 
@@ -44,7 +52,7 @@ class CustomerPatch(BaseModel):
     notes: str | None = None
 
 
-def _row_to_out(row: CustomerRow) -> CustomerOut:
+def _row_to_out(row: CustomerRow, source_links: list[LinkRow] | None = None) -> CustomerOut:
     return CustomerOut(
         id=row.id,
         tenant_id=row.tenant_id,
@@ -58,6 +66,10 @@ def _row_to_out(row: CustomerRow) -> CustomerOut:
         notes=row.notes,
         first_seen_at=row.first_seen_at,
         last_enriched_at=row.last_enriched_at,
+        source_links=[
+            SourceLinkOut(id=l.id, url=l.url, campaign_id=l.campaign_id, scraped_at=l.scraped_at)
+            for l in (source_links or [])
+        ],
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
@@ -106,7 +118,19 @@ def get_customer(
     session: Session = Depends(get_session),
 ):
     row = _get_or_404(customer_id, tenant_id, session)
-    return ok(_row_to_out(row))
+    source_links = (
+        session.query(LinkRow)
+        .join(LinkLeadsRow, LinkLeadsRow.link_id == LinkRow.id)
+        .join(LeadRow, LeadRow.id == LinkLeadsRow.lead_id)
+        .filter(
+            LeadRow.customer_id == customer_id,
+            LeadRow.tenant_id == tenant_id,
+            LinkRow.tenant_id == tenant_id,
+        )
+        .distinct()
+        .all()
+    )
+    return ok(_row_to_out(row, source_links=source_links))
 
 
 @router.patch("/{customer_id}")

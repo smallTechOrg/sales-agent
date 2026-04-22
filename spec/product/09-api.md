@@ -54,6 +54,9 @@ flowchart LR
     camp_id --> camp_patch["PATCH"]
     camp_id --> camp_del["DELETE"]
     camp_id --> camp_trigger["POST /{id}/trigger"]
+    camp_id --> camp_stats["GET /{id}/stats"]
+    camp_id --> camp_runs["GET /{id}/runs"]
+    camp_id --> camp_run_id["GET /{id}/runs/{run_id}"]
 
     root --> leads["/leads"]
     leads --> lead_list["GET  ?campaign_id=&stage="]
@@ -63,13 +66,15 @@ flowchart LR
     lead_id --> lead_block["POST /{id}/block"]
 
     root --> contacts["/contacts"]
-    contacts --> cont_list["GET  ?lead_id="]
+    contacts --> cont_list["GET  ?lead_id=&customer_id="]
     contacts --> cont_id["/{id}"]
     cont_id --> cont_get["GET"]
     cont_id --> cont_patch["PATCH"]
 
     root --> links["/links"]
-    links --> link_list["GET  ?campaign_id="]
+    links --> link_list["GET  ?campaign_id=&tenant_scope=true"]
+    links --> link_id["/{id}"]
+    link_id --> link_leads["GET /{id}/leads"]
 
     root --> customers["/customers"]
     customers --> cust_list["GET"]
@@ -90,6 +95,14 @@ flowchart LR
 
     style root fill:#1168bd,color:#fff,stroke:#0b4884
 ```
+
+---
+
+Agent runs in a dedicated `ThreadPoolExecutor` (max workers configurable via `ZER0_RUNNER_MAX_WORKERS`, default 4). Uvicorn handler threads are **never** blocked by agent execution. Run status is tracked in `campaign_runs` (see data-model spec).
+
+`POST /campaigns/{id}/trigger` returns `202` with `run_id` immediately. Status is polled via `GET /campaigns/{id}/runs/{run_id}`.
+
+If a run with status `running` already exists for the campaign, the trigger endpoint returns `409 CONFLICT`.
 
 ---
 

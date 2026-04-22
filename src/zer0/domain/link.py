@@ -20,7 +20,7 @@ class LinkSource(str, Enum):
 class Link(BaseModel):
     id: str
     tenant_id: str
-    campaign_id: str
+    campaign_id: str | None = None  # first discoverer — nullable for tenant-scoped links
     url: str
     source: LinkSource
     page_text: str | None = None

@@ -14,7 +14,7 @@ import structlog
 from datetime import datetime, timezone
 
 from zer0.config.resolver import ConfigResolver
-from zer0.db.models import ContactRow, CustomerRow, LeadRow, LinkRow, MessageRow
+from zer0.db.models import ContactRow, CustomerRow, LeadRow, LinkLeadsRow, LinkRow, MessageRow
 from zer0.db.session import create_db_session
 from zer0.domain import Contact, Customer, Lead, Link
 from zer0.domain.config import ApprovalMode, Channel
@@ -75,7 +75,12 @@ def node_resolve_config(state: AgentState) -> dict:
 # ---------------------------------------------------------------------------
 
 def node_discover(state: AgentState) -> dict:
-    """Run discovery tools and persist raw Link rows (URLs only — no scraping yet)."""
+    """Run discovery tools and persist raw Link rows (URLs only — no scraping yet).
+
+    Deduplication is tenant-scoped: a URL already seen for this tenant (in any
+    previous campaign) is not re-inserted. The link_leads junction records the
+    association between the existing/new link and the current campaign run.
+    """
     if state.get("error"):
         return {}
 
@@ -85,21 +90,25 @@ def node_discover(state: AgentState) -> dict:
     campaign_id = state["campaign_id"]
     tenant_id = state["tenant_id"]
 
+    # Seed seen_urls from in-memory state links
     seen_urls: set[str] = {lnk.url for lnk in state.get("links", [])}
-
+    # Extend with tenant-wide DB URLs (not just this campaign)
+    existing_url_to_id: dict[str, str] = {}
     try:
         with create_db_session() as db_check:
-            db_urls = {
-                r[0]
-                for r in db_check.query(LinkRow.url)
-                .filter(LinkRow.tenant_id == tenant_id, LinkRow.campaign_id == campaign_id)
+            rows = (
+                db_check.query(LinkRow.url, LinkRow.id)
+                .filter(LinkRow.tenant_id == tenant_id)
                 .all()
-            }
-        seen_urls.update(db_urls)
+            )
+            for url, lid in rows:
+                existing_url_to_id[url] = lid
+                seen_urls.add(url)
     except Exception as exc:
         log.warning("discover.db_dedup_failed", error=str(exc))
 
     raw_links: list[Link] = []
+    reused_links: list[Link] = []  # existing links re-used by this campaign
     settings = None
 
     base_kwargs: dict = {
@@ -137,7 +146,17 @@ def node_discover(state: AgentState) -> dict:
 
                 for r in results:
                     url = getattr(r, "url", None)
-                    if url and url not in seen_urls:
+                    if not url:
+                        continue
+                    if url in existing_url_to_id:
+                        # Re-use: load existing link for this campaign
+                        reused_links.append(Link(
+                            id=existing_url_to_id[url],
+                            tenant_id=tenant_id,
+                            url=url,
+                            source=LinkSourceModel.web,
+                        ))
+                    elif url not in seen_urls:
                         seen_urls.add(url)
                         raw_links.append(Link(
                             id=_new_id(),
@@ -157,7 +176,16 @@ def node_discover(state: AgentState) -> dict:
 
             for r in results:
                 url = getattr(r, "url", None)
-                if url and url not in seen_urls:
+                if not url:
+                    continue
+                if url in existing_url_to_id:
+                    reused_links.append(Link(
+                        id=existing_url_to_id[url],
+                        tenant_id=tenant_id,
+                        url=url,
+                        source=lnk_source,
+                    ))
+                elif url not in seen_urls:
                     seen_urls.add(url)
                     raw_links.append(Link(
                         id=_new_id(),
@@ -192,7 +220,8 @@ def node_discover(state: AgentState) -> dict:
         except Exception as exc:
             log.warning("discover.db_write_failed", error=str(exc))
 
-    return {"links": list(state.get("links", [])) + raw_links}
+    all_new = list(state.get("links", [])) + raw_links + reused_links
+    return {"links": all_new}
 
 
 # ---------------------------------------------------------------------------
@@ -343,6 +372,16 @@ def node_identify_leads(state: AgentState) -> dict:
                             lead_id=lead.id,
                             payload={"company_name": lead.company_name, "link_id": lnk.id, "customer_id": customer_id},
                         )
+
+                        # Write link_leads junction row
+                        ll_row = LinkLeadsRow(
+                            id=_new_id(),
+                            tenant_id=tenant_id,
+                            link_id=lnk.id,
+                            lead_id=lead.id,
+                            campaign_id=campaign_id,
+                        )
+                        session.add(ll_row)
                 except Exception as exc:
                     log.warning("identify_leads.db_write_failed", lead_id=lead.id, error=str(exc))
         except Exception as exc:
@@ -356,32 +395,81 @@ def node_identify_leads(state: AgentState) -> dict:
 # ---------------------------------------------------------------------------
 
 def node_research(state: AgentState) -> dict:
-    """Enrich leads by appending signals/summary from their source page."""
+    """Research each prospect via independent web search, then synthesise.
+
+    Sub-step 3A: web-search the company → scrape result pages.
+    Sub-step 3B: call enrich_lead with scraped research_sources.
+    Sub-step 3C: append results to lead + customer (cumulative).
+
+    Spec: spec/product/04-capabilities/02-enrichment.md — Sub-step 3
+    """
     if state.get("error"):
         return {}
 
     config = state["config"]
     llm = LLMClient()
-    links_by_id = {lnk.id: lnk for lnk in state.get("links", [])}
     updated_leads: list[Lead] = []
+
+    try:
+        from zer0.config.settings import get_settings
+        settings = get_settings()
+        tavily_key = settings.tavily_api_key
+    except Exception:
+        tavily_key = None
 
     for lead in state.get("leads", []):
         if lead.stage not in (LeadStage.prospect, LeadStage.research):
             updated_leads.append(lead)
             continue
         try:
-            page_text = ""
-            if lead.link_id and lead.link_id in links_by_id:
-                page_text = links_by_id[lead.link_id].page_text or ""
-            elif lead.domain:
-                try:
-                    page_text = scrape_page(url=f"https://{lead.domain}")
-                except Exception:
-                    pass
+            # 3A — Independent web search for this company
+            research_sources: list[str] = []
+            query_str = f"{lead.company_name or ''} {lead.domain or ''} company overview".strip()
 
+            if tavily_key:
+                from zer0.tools.web_search import web_search as _tavily_search
+                from zer0.domain.config import DiscoveryConfig, DiscoverySource
+                research_disc = DiscoveryConfig(
+                    sources=[DiscoverySource.web],
+                    query_templates=[query_str],
+                    geography=[],
+                    volume_per_run=5,
+                )
+                try:
+                    res = _tavily_search(
+                        discovery_config=research_disc,
+                        icp=config.icp,
+                        tenant_id=lead.tenant_id,
+                        campaign_id=lead.campaign_id or state["campaign_id"],
+                        tavily_api_key=tavily_key,
+                    )
+                    research_urls = [getattr(r, "url", None) for r in res if getattr(r, "url", None)]
+                except Exception as exc:
+                    log.warning("research.tavily_failed", lead_id=lead.id, error=str(exc))
+                    research_urls = []
+            else:
+                from zer0.tools.duckduckgo_search import duckduckgo_search as _ddg
+                from duckduckgo_search import DDGS
+                try:
+                    with DDGS() as ddgs:
+                        ddg_results = list(ddgs.text(query_str, max_results=5))
+                    research_urls = [r.get("href") for r in ddg_results if r.get("href")]
+                except Exception as exc:
+                    log.warning("research.ddg_failed", lead_id=lead.id, error=str(exc))
+                    research_urls = []
+
+            for url in research_urls[:5]:
+                try:
+                    text = scrape_page(url=url)
+                    if text:
+                        research_sources.append(text)
+                except Exception as exc:
+                    log.debug("research.scrape_skipped", url=url, error=str(exc))
+
+            # 3B — Synthesise via LLM
             enriched = enrich_lead(
                 lead=lead,
-                page_text=page_text,
+                research_sources=research_sources,
                 icp=config.icp,
                 llm=llm,
                 config=config,
@@ -389,6 +477,7 @@ def node_research(state: AgentState) -> dict:
             updated = enriched.model_copy(update={"stage": LeadStage.research})
             updated_leads.append(updated)
 
+            # 3C — Cumulative write to lead + customer
             try:
                 with create_db_session() as session:
                     row = (
@@ -402,7 +491,6 @@ def node_research(state: AgentState) -> dict:
                         row.signals = updated.signals
                         row.last_researched_at = updated.last_researched_at
 
-                    # Append research to the tenant-wide CustomerRow
                     if lead.domain:
                         customer_row = (
                             session.query(CustomerRow)
@@ -410,7 +498,6 @@ def node_research(state: AgentState) -> dict:
                             .first()
                         )
                         if customer_row:
-                            # Append summary with separator
                             if updated.research_summary:
                                 if customer_row.research_summary:
                                     customer_row.research_summary = (
@@ -418,7 +505,6 @@ def node_research(state: AgentState) -> dict:
                                     )
                                 else:
                                     customer_row.research_summary = updated.research_summary
-                            # Merge signals (deduplicated)
                             if updated.signals:
                                 existing = set(customer_row.signals or [])
                                 merged = list(existing | set(updated.signals))
@@ -429,9 +515,9 @@ def node_research(state: AgentState) -> dict:
                         db=session,
                         event_type="lead.researched",
                         tenant_id=lead.tenant_id,
-                        campaign_id=lead.campaign_id,
+                        campaign_id=lead.campaign_id or state["campaign_id"],
                         lead_id=lead.id,
-                        payload={"signals_count": len(updated.signals)},
+                        payload={"signals_count": len(updated.signals or []), "sources_used": len(research_sources)},
                     )
             except Exception as exc:
                 log.warning("research.db_write_failed", lead_id=lead.id, error=str(exc))
@@ -527,13 +613,44 @@ def node_get_contacts(state: AgentState) -> dict:
                 config=config,
             )
             for contact in contacts:
-                new_contacts.append(contact)
+                # Deduplicate: if same (customer_id, email) exists, skip insert
+                customer_id_for_lead = None
+                if lead.customer_id:
+                    customer_id_for_lead = lead.customer_id
+                    # Check if this contact already exists for this customer
+                    try:
+                        with create_db_session() as dup_check:
+                            existing = (
+                                dup_check.query(ContactRow)
+                                .filter(
+                                    ContactRow.customer_id == customer_id_for_lead,
+                                    ContactRow.email == contact.email,
+                                )
+                                .first()
+                            )
+                            if existing:
+                                log.info(
+                                    "get_contacts.cross_campaign_dedup",
+                                    contact_id=existing.id,
+                                    customer_id=customer_id_for_lead,
+                                )
+                                new_contacts.append(contact.model_copy(update={
+                                    "id": existing.id,
+                                    "customer_id": customer_id_for_lead,
+                                }))
+                                continue
+                    except Exception as exc:
+                        log.warning("get_contacts.dedup_check_failed", error=str(exc))
+
+                contact_with_customer = contact.model_copy(update={"customer_id": customer_id_for_lead})
+                new_contacts.append(contact_with_customer)
                 try:
                     with create_db_session() as session:
                         row = ContactRow(
                             id=contact.id,
                             tenant_id=lead.tenant_id,
                             lead_id=lead.id,
+                            customer_id=customer_id_for_lead,
                             first_name=contact.first_name,
                             last_name=contact.last_name,
                             full_name=contact.full_name,
@@ -547,7 +664,7 @@ def node_get_contacts(state: AgentState) -> dict:
                             db=session,
                             event_type="contact.discovered",
                             tenant_id=lead.tenant_id,
-                            campaign_id=lead.campaign_id,
+                            campaign_id=lead.campaign_id or state["campaign_id"],
                             lead_id=lead.id,
                             contact_id=contact.id,
                             payload={"role": contact.role},

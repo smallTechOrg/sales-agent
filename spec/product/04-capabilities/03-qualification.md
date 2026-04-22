@@ -44,6 +44,13 @@ Score each researched lead against the campaign's ICP rubric and decide whether 
 | `leads` DB rows | `stage`, `score`, `per_criterion_scores`, `rationale`, `rejection_reason` written |
 | `events` DB rows | `lead_qualified` or `lead_rejected` |
 
+## Company size — non-blocking rule
+
+`ICP.company_size_range` is **optional**. If it is `None` (not configured), the qualifier MUST NOT penalise the lead for unknown headcount. Specifically:
+- If `headcount_range` is `NULL` on the lead, pass the value as `"unknown"` in the prompt — do not treat as a criterion failure.
+- If `company_size_range` is `None` in the ICP config, omit the company-size criterion from the rubric rendered to the LLM entirely.
+- Automatic rejection solely on the basis of unknown or mismatched company size is **forbidden**.
+
 ## Failure modes
 
 | Class | Response |

@@ -44,7 +44,7 @@ class DiscoveryConfig(BaseModel):
 class ICP(BaseModel):
     target_industries: list[str]
     target_roles: list[str]
-    company_size_range: CompanySizeRange
+    company_size_range: CompanySizeRange | None = None  # optional — omit to skip size filtering
     geography: list[str]
     keywords: list[str]
     negative_keywords: list[str]

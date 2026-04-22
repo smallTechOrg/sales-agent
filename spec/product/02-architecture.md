@@ -220,7 +220,7 @@ Tenant ID is a non-nullable foreign key on every database table. The API enforce
 | Model                  | Key fields                                                                                            |
 | ---------------------- | ----------------------------------------------------------------------------------------------------- |
 | `DiscoveryConfig`      | sources (linkedin, web, directories), query_templates, geography, volume_per_run                      |
-| `ICP`                  | target_industries, target_roles, company_size_range, geography, keywords, negative_keywords           |
+| `ICP`                  | target_industries, target_roles, **company_size_range** (optional — omit to skip size filtering), geography, keywords, negative_keywords |
 | `QualificationConfig`  | rubric_criteria ([{name, description, weight}]), score_threshold, disqualifying_signals               |
 | `OutreachConfig`       | channels_enabled, tone, language_default, templates ({first_touch, follow_up_1..N}), follow_up_count, follow_up_spacing_days, send_schedule |
 
@@ -228,7 +228,7 @@ Tenant ID is a non-nullable foreign key on every database table. The API enforce
 
 | Model             | Key fields                                                                                                                                                     |
 | ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Link`            | id, tenant_id, campaign_id, url, source (web/linkedin/directory), page_text, scraped_at                                                                        |
+| `Link`            | id, tenant_id, **campaign_id (nullable — first discoverer)**, url, source (web/linkedin/directory), page_text, scraped_at                                                                        |
 | `Lead`            | id, tenant_id, campaign_id, link_id, stage, company_name, domain, industry, headcount_range, business_type, research_summary, signals, score, per_criterion_scores, rationale, rejection_reason, detected_language, blocked_at, last_researched_at |
 | `Contact`         | id, tenant_id, lead_id, first_name, last_name, email, phone, role, seniority_level, decision_maker_score, approved_for_outreach, outreach_stopped               |
 | `OutreachDraft`   | lead_id, contact_id, channel, subject (email only), body, personalisation_notes, config_snapshot                                                               |

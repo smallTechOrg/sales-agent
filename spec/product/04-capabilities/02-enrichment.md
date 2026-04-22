@@ -43,11 +43,25 @@ Runs after `node_scrape_links`. Processes all `Link` objects where `page_text is
 Runs after `node_identify_leads` for all leads with `stage == "prospect"`.
 
 ### Behavior
-1. For each prospect lead: call `enrich_lead(lead, config.icp)` — an LLM call that summarises company context and detects buying signals.
-2. **Cumulative mode:** New signals are **appended** to `lead.signals` (not overwritten). New summary paragraph is **appended** to `lead.research_summary`. If the lead was researched before (re-run), existing data is preserved.
-3. Set `lead.last_researched_at = now()`; set `lead.stage = "research"`.
-4. Persist updated `LeadRow`.
-5. Emit `lead_researched` event.
+
+Research is **independent web research about the company** — it does not re-use the discovery page text. The three micro-steps are:
+
+**3A — Web search for the company:**
+1. Construct a research query: `"{company_name} {domain} company overview"`.
+2. Call `web_search` (Tavily if configured, else `duckduckgo_search`) with the query. Collect up to 5 result URLs.
+3. For each result URL: call `scrape_page(url)` to fetch page content. Errors are non-fatal — skip failed pages, continue with the rest.
+
+**3B — Synthesis via LLM:**
+4. Call `enrich_lead(lead, research_sources, config.icp)` where `research_sources` is the list of freshly scraped page texts.
+5. The LLM reads the research sources and produces `company_summary` (str) and `recent_signals` (list[str]).
+
+**3C — Cumulative write:**
+6. **Append** new summary to `lead.research_summary` (separator `\n\n---\n`). Never overwrite.
+7. **Append** new signals to `lead.signals` (deduplicated). Never overwrite.
+8. **Append** same data to the tenant-wide `CustomerRow.research_summary` and `CustomerRow.signals`.
+9. Set `lead.last_researched_at = now()`; set `lead.stage = "research"`.
+10. Persist updated `LeadRow` and `CustomerRow`.
+11. Emit `lead.researched` event.
 
 ## Inputs
 
@@ -58,6 +72,9 @@ Runs after `node_identify_leads` for all leads with `stage == "prospect"`.
 | `icp` | `ResolvedConfig.icp` |
 | `researcher.md` prompt | `src/zer0/prompts/researcher.md` |
 | `identifier.md` prompt | `src/zer0/prompts/identifier.md` |
+| `web_search` / `duckduckgo_search` tool | Used in Sub-step 3A to fetch fresh company pages |
+| `scrape_page` tool | Used in Sub-step 3A to extract page text from research URLs |
+| `tavily_api_key` | `Settings.tavily_api_key` (optional — enables Tavily for research queries) |
 | LLM settings | `ResolvedConfig` → `Settings` |
 
 ## Outputs

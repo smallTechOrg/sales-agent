@@ -19,16 +19,17 @@ log = structlog.get_logger(__name__)
 
 
 def _preload_links(campaign_id: str, tenant_id: str) -> list[Link]:
-    """Load all existing LinkRows for this campaign from DB into domain objects.
+    """Load all existing LinkRows for this tenant from DB into domain objects.
 
-    Page text and scraped_at are preserved so node_scrape_links skips already-
-    fetched pages, and node_identify_leads skips already-processed links.
+    Tenant-scoped (not campaign-scoped) because links are now deduplicated by
+    (tenant_id, url). The discover node still filters by campaign via link_leads,
+    but the in-memory state carries all tenant links so the dedup set is correct.
     """
     try:
         with create_db_session() as session:
             rows = (
                 session.query(LinkRow)
-                .filter(LinkRow.tenant_id == tenant_id, LinkRow.campaign_id == campaign_id)
+                .filter(LinkRow.tenant_id == tenant_id)
                 .all()
             )
         links = []

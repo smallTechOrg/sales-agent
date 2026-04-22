@@ -14,6 +14,7 @@ class Contact(BaseModel):
     id: str
     tenant_id: str
     lead_id: str
+    customer_id: str | None = None  # set during get_contacts for cross-campaign dedup
     first_name: str | None = None
     last_name: str | None = None
     full_name: str | None = None

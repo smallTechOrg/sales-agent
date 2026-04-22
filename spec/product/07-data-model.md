@@ -360,7 +360,7 @@ Raw discovery results — one row per URL found during a campaign run. A single 
 | ------------ | ----------- | ---------------------------- | ------------------------------------------------- |
 | `id`         | UUID        | PK, NOT NULL                 |                                                   |
 | `tenant_id`  | UUID        | NOT NULL, FK → tenants.id    |                                                   |
-| `campaign_id`| UUID        | NOT NULL, FK → campaigns.id  |                                                   |
+| `campaign_id`| UUID        |                              | FK → campaigns.id. **Nullable** — set to the first campaign that discovered this URL. Subsequent campaigns share the same row. |
 | `url`        | TEXT        | NOT NULL                     |                                                   |
 | `source`     | link_source | NOT NULL                     | `web`, `linkedin`, `directory`.                   |
 | `page_text`     | TEXT        |                              | Full scraped body. NULL = not yet scraped or failed.                                              |
@@ -368,7 +368,25 @@ Raw discovery results — one row per URL found during a campaign run. A single 
 | `identified_at` | TIMESTAMPTZ |                              | NULL = link has not yet been processed by `node_identify_leads`. Set after identify step completes. |
 | `created_at`    | TIMESTAMPTZ | NOT NULL, DEFAULT now()      |                                                                                                    |
 
-**Indexes:** PK on `id`; `idx_links_campaign` on `(tenant_id, campaign_id)`; unique `idx_links_url` on `(tenant_id, campaign_id, url)` — deduplication guard.
+**Indexes:** PK on `id`; `idx_links_tenant` on `(tenant_id)`; unique `uq_links_tenant_url` on `(tenant_id, url)` — global deduplication guard across campaigns.
+
+---
+
+### `link_leads`
+
+Junction table associating links to leads (and their campaigns). Enables querying “which leads came from this link” and “which links contributed to this customer”.
+
+| Column        | Type        | Constraints               | Notes |
+| ------------- | ----------- | ------------------------- | ----- |
+| `id`          | UUID        | PK, NOT NULL              |       |
+| `tenant_id`   | UUID        | NOT NULL, FK → tenants.id |       |
+| `link_id`     | UUID        | NOT NULL, FK → links.id   |       |
+| `lead_id`     | UUID        | NOT NULL, FK → leads.id   |       |
+| `campaign_id` | UUID        | NOT NULL, FK → campaigns.id |     |
+| `created_at`  | TIMESTAMPTZ | NOT NULL, DEFAULT now()   |       |
+
+**Constraints:** unique `uq_link_leads` on `(tenant_id, link_id, lead_id)`.
+**Indexes:** PK on `id`; `idx_link_leads_link` on `(tenant_id, link_id)`; `idx_link_leads_lead` on `(tenant_id, lead_id)`.
 
 ---
 
@@ -452,12 +470,33 @@ Individual people within a lead's company. Populated by the `get_contacts` node 
 | `role`                  | TEXT           |                           | Job title string.                                                    |
 | `seniority_level`       | seniority_level|                           |                                                                      |
 | `decision_maker_score`  | NUMERIC(5,2)   |                           | 0–100. Higher = more likely to be the right person to contact.       |
-| `approved_for_outreach` | BOOLEAN        | NOT NULL, DEFAULT false   | Set to true when operator approves this contact at the approval gate.|
+| `customer_id`        | UUID        |                              | FK → customers.id. Set by `node_get_contacts` to link the contact to the tenant-wide customer record. Used for cross-campaign contact deduplication. |
+| `approved_for_outreach` | BOOLEAN  | NOT NULL, DEFAULT false   | Set to true when operator approves this contact at the approval gate.|
 | `outreach_stopped`      | BOOLEAN        | NOT NULL, DEFAULT false   | Set to true when a positive reply is received from any contact for this lead. |
 | `created_at`            | TIMESTAMPTZ    | NOT NULL, DEFAULT now()   |                                                                      |
 | `updated_at`            | TIMESTAMPTZ    | NOT NULL, DEFAULT now()   |                                                                      |
 
-**Indexes:** PK on `id`; `idx_contacts_lead` on `(tenant_id, lead_id)`; unique `idx_contacts_email` on `(lead_id, email)`.
+**Indexes:** PK on `id`; `idx_contacts_lead` on `(tenant_id, lead_id)`; `idx_contacts_customer` on `(tenant_id, customer_id)`; unique `idx_contacts_email` on `(lead_id, email)`; unique `uq_contacts_customer_email` on `(customer_id, email)` — cross-campaign deduplication guard.
+
+---
+
+### `campaign_runs`
+
+Tracking table for individual agent run invocations. Written by `runner_service.py`. Enables non-blocking monitoring of in-progress runs.
+
+| Column         | Type        | Constraints                  | Notes |
+| -------------- | ----------- | ---------------------------- | ----- |
+| `id`           | UUID        | PK, NOT NULL                 | `run_id` generated by the trigger endpoint. |
+| `tenant_id`    | UUID        | NOT NULL, FK → tenants.id    |       |
+| `campaign_id`  | UUID        | NOT NULL, FK → campaigns.id  |       |
+| `status`       | run_status  | NOT NULL, DEFAULT `pending`  | `pending` → `running` → `completed` / `failed`. |
+| `current_node` | TEXT        |                              | Name of the graph node currently executing. Updated by the runner. |
+| `started_at`   | TIMESTAMPTZ |                              | Set when status → `running`. |
+| `finished_at`  | TIMESTAMPTZ |                              | Set when status → `completed` or `failed`. |
+| `error`        | TEXT        |                              | Non-null on `failed`. |
+| `created_at`   | TIMESTAMPTZ | NOT NULL, DEFAULT now()      |       |
+
+**Indexes:** PK on `id`; `idx_runs_campaign` on `(tenant_id, campaign_id)`; `idx_runs_running` on `(tenant_id, campaign_id, status)` WHERE `status = 'running'`.
 
 ---
 
