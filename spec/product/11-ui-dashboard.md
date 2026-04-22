@@ -55,12 +55,14 @@ Every screen maps to one or more API endpoints. All operations are backed by the
 |---|---|
 | Dashboard home | `GET /api/v1/tenants` + health summary |
 | Leads view (global per-tenant) | `GET /api/v1/leads?all_campaigns` |
+| Customers view | `GET /api/v1/customers` |
 | Tenant detail / pipeline view | `GET /api/v1/leads?campaign_id=...` |
 | Tenant onboarding wizard | `POST /api/v1/tenants` → credentials → campaign |
 | Campaign builder | `POST /api/v1/campaigns` / `PUT /api/v1/campaigns/{id}` |
 | Offering editor | `POST /api/v1/offerings` / `PUT /api/v1/offerings/{id}` |
 | Approval queue | `GET /api/v1/approvals` |
 | Lead detail | `GET /api/v1/leads/{id}` |
+| Customer detail | `GET /api/v1/customers/{id}` |
 | Contacts view | `GET /api/v1/contacts?lead_id=...` |
 | Messages view | `GET /api/v1/messages?campaign_id=...` |
 | Events log | `GET /api/v1/events?tenant_id=...` |
@@ -79,12 +81,14 @@ flowchart LR
     Login --> Dashboard
     Dashboard --> TenantDetail
     Dashboard --> LeadsGlobal["Leads view"]
+    Dashboard --> CustomersGlobal["Customers view"]
     Dashboard --> NewTenant["Onboarding wizard"]
     TenantDetail --> CampaignBuilder
     TenantDetail --> LeadPipeline
     TenantDetail --> ApprovalQueue
     LeadsGlobal --> LeadDetail
     LeadPipeline --> LeadDetail
+    CustomersGlobal --> CustomerDetail
     CampaignBuilder --> OfferingEditor
     LeadDetail --> MessagesView
     LeadDetail --> EventsLog
@@ -249,6 +253,55 @@ Visible on the dashboard badge when any campaign has `approval_mode` set. Shows 
 - **Approve:** sets status to `approved`; agent sends on next tick.
 - **Reject:** sets status to `rejected` with operator reason. No message is sent.
 - **Edit & approve:** operator can modify the message body before approving (writes back to `messages.body`). Only allowed when status is `pending_approval`.
+
+---
+
+### Customers view
+
+Tenant-wide persistent knowledge base of all identified companies. Cumulative data across all campaigns, enriched on every agent run.
+
+- **Filter bar:** industry, business type, size range, research freshness (fresh / stale / needs refresh), activity (has active leads / archived).
+- **Customer row:** company name, domain, **industry**, **business type** (enterprise / mid-market / SMB / etc.), **headcount range**, **research freshness icon** (🟢 < 7 days / 🟡 7–30 days / 🔴 > 30 days), **active lead count**, **total contacts discovered**, **last enriched timestamp** (relative time).
+- **Customer row hover details:** first seen timestamp, signal count (buying-intent signals detected), notes preview (first 100 chars).
+- **Customer click** → Opens a customer detail drawer (see "Customer detail" below).
+
+---
+
+### Customer detail
+
+Shows the cumulative intelligence for a single company across all campaigns and runs.
+
+**Sections:**
+
+- **Profile:** `company_name` (editable), `domain`, `industry` (editable), `headcount_range`, `business_type`, **enrichment freshness indicator**, **first seen** (relative time with exact timestamp on hover).
+
+- **Research summary:** 
+  - Cumulative `research_summary` (all paragraphs from every run, separated with clear timestamps of when each section was added).
+  - Display as expandable rich-text timeline (each run's findings in its own block with the date appended as a label).
+
+- **Signals & insights:** 
+  - Bulleted list of detected buying-intent signals, deduplicated across all campaigns and runs.
+  - Show signal name, confidence level (if available), first detected date (relative), and count (how many times this signal appeared across campaigns).
+  - Grouped by category (financial, technical, organizational, etc.) if available in payload.
+
+- **Operator notes:** 
+  - Human-editable free-text field (never overwritten by agent).
+  - Rich text support (bold, bullet lists, links).
+  - Last edited by + timestamp.
+
+- **Leads & campaigns:** 
+  - Table of all leads referencing this customer, grouped by campaign.
+  - Columns: campaign name, lead stage, score (if qualified), lead lead date (when discovered), latest activity.
+  - Each row is clickable and opens the lead detail drawer.
+
+- **Contacts discovered:** 
+  - Table of all contacts from this company discovered across all campaigns.
+  - Columns: name, role, seniority level, decision maker score, campaigns contacted in (logos or list), latest outreach date.
+  - "View all contacts" link to filter the global contacts view by this customer.
+
+- **Activity timeline:** 
+  - Chronological log of all agent actions and operator actions related to this customer (e.g., "Researched by agent", "Lead qualified", "Contact approved by operator", "Message sent").
+  - Timestamps and user/agent attribution.
 
 ---
 
