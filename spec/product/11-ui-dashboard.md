@@ -2,7 +2,7 @@
 
 **Status:** DRAFT
 
-The operator web UI is the primary interface for Zer0. Every action a sales team operator needs — onboarding a tenant, wiring credentials, designing a campaign ICP, monitoring agent runs, reviewing outreach drafts, approving messages — is available here. The CLI ([`06-cli.md`](06-cli.md)) covers the same operations; the UI is a guided, browser-based layer over the same API.
+The operator web UI is the primary interface for Zer0. Every action a sales team operator needs — onboarding a tenant, wiring credentials, designing a campaign ICP, monitoring agent runs, reviewing outreach drafts, approving messages — is available here. The UI is a guided, browser-based layer over the API.
 
 ---
 
@@ -14,7 +14,7 @@ Operators only. Leads never interact with this UI. There is no lead-facing or te
 
 ## Hosting
 
-`zer0 ui` (future CLI command — Phase 11) starts a process that:
+The UI serves the pre-built Next.js static export bundled inside the Python application package. It:
 
 - Serves the pre-built Next.js static export bundled inside the Python package.
 - Exposes a JSON API under `/api/v1/` consumed by the frontend (the same FastAPI app as the main API).
@@ -49,7 +49,7 @@ These rules derive from [`../engineering/secret-hygiene.md`](../engineering/secr
 
 ## Screen map
 
-Every screen maps to one or more API endpoints. The underlying DB operations are identical to what the CLI does.
+Every screen maps to one or more API endpoints. All operations are backed by the same RESTful API.
 
 | Screen | API equivalent |
 |---|---|
@@ -317,7 +317,7 @@ No live log streaming in v1. The events log auto-refreshes every 10 seconds whil
 | DB unreachable | API returns 503; UI shows "database unavailable" banner |
 | Credential validation fails (onboarding) | Inline error on the credential field; wizard does not advance |
 | Approval queue empty | Screen shows "No pending approvals" — not an error state |
-| Non-loopback bind without `ZER0_UI_PASSWORD` | `zer0 ui` refuses to start with a clear error |
+| Non-loopback bind without `ZER0_UI_PASSWORD` | Application refuses to start with a clear error |
 
 ---
 

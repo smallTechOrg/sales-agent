@@ -63,7 +63,6 @@ flowchart LR
     leads --> lead_id["/{id}"]
     lead_id --> lead_get["GET"]
     lead_id --> lead_patch["PATCH"]
-    lead_id --> lead_block["POST /{id}/block"]
 
     root --> contacts["/contacts"]
     contacts --> cont_list["GET  ?lead_id=&customer_id="]

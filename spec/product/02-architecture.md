@@ -87,7 +87,7 @@ flowchart LR
 
 ```
 ┌──────────────────────────────────────────────┐
-│               API / CLI                      │  ← FastAPI (dashboard backend) + click (local)
+│                    API                       │  ← FastAPI (dashboard backend)
 ├──────────────────────────────────────────────┤
 │                  GRAPH                       │  ← langgraph: state, nodes, edges
 ├──────────────────────────────────────────────┤
@@ -109,7 +109,6 @@ flowchart LR
 | `prompts/`       | Markdown templates loaded at runtime. All prompt variables are config-injected. |
 | `observability/` | Structured logs, Slack event posting, audit trail writer.                       |
 | `api/`           | FastAPI routes — the backend for the web dashboard.                             |
-| `cli/`           | Click commands — local dev and admin.                                           |
 | `config/`        | pydantic-settings, loaded from `.env`. System-level secrets only.               |
 
 ### Module dependency graph
@@ -119,7 +118,6 @@ Arrows represent import direction. `domain/` has no dependencies inside `src/` �
 ```mermaid
 flowchart TD
     api["api/\nFastAPI routes"]
-    cli["cli/\nClick commands"]
     graph["graph/\nStateGraph · nodes · edges · runner"]
     tools["tools/\none file per tool"]
     llm["llm/\nmodel client · tool schemas"]
@@ -131,7 +129,6 @@ flowchart TD
 
     api           --> graph
     api           --> domain
-    cli           --> graph
     graph         --> tools
     graph         --> llm
     graph         --> memory

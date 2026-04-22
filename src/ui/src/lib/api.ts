@@ -362,8 +362,6 @@ export const api = {
     get<LeadData>(`/api/v1/leads/${id}`, tenantId),
   patchLead: (tenantId: string, id: string, body: Record<string, unknown>) =>
     patch<LeadData>(`/api/v1/leads/${id}`, tenantId, body),
-  triggerFollowUp: (tenantId: string, id: string) =>
-    post<unknown>(`/api/v1/leads/${id}/trigger-followup`, tenantId, {}),
 
   // Links
   listLinks: (tenantId: string, campaignId: string, cursor?: string) => {
