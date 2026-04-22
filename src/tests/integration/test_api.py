@@ -88,8 +88,8 @@ class TestCampaignTrigger:
 
         app.dependency_overrides[get_session] = _found_campaign
         try:
-            # Patch the background task runner so no actual graph runs
-            with patch("zer0.graph.runner.run_campaign"):
+            # Patch the runner_service so no actual thread-pool work runs
+            with patch("zer0.graph.runner_service.submit"):
                 with TestClient(app) as c:
                     resp = c.post(
                         "/api/v1/campaigns/some-id/trigger",

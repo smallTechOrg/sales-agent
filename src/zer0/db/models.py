@@ -110,7 +110,6 @@ class CampaignRow(Base):
 
     tenant: Mapped[TenantRow] = relationship(back_populates="campaigns")
     offering: Mapped[OfferingRow] = relationship(back_populates="campaigns")
-    links: Mapped[list[LinkRow]] = relationship(back_populates="campaign")
     leads: Mapped[list[LeadRow]] = relationship(back_populates="campaign")
 
 
