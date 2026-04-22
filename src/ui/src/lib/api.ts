@@ -229,6 +229,45 @@ export interface TriggerResult {
   message: string;
 }
 
+export interface RunData {
+  id: string;
+  campaign_id: string;
+  tenant_id: string;
+  status: "pending" | "running" | "completed" | "failed" | "interrupted";
+  current_node: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  error: string | null;
+  created_at: string;
+}
+
+export interface CampaignStats {
+  campaign_id: string;
+  total_links: number;
+  total_leads: number;
+  by_stage: Record<string, number>;
+  messages_sent: number;
+  replies_received: number;
+}
+
+export interface ContactData {
+  id: string;
+  tenant_id: string;
+  lead_id: string;
+  customer_id: string | null;
+  first_name: string | null;
+  last_name: string | null;
+  full_name: string | null;
+  email: string | null;
+  phone: string | null;
+  role: string | null;
+  linkedin_url: string | null;
+  approved_for_outreach: boolean;
+  outreach_stopped: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface DecisionResult {
   decision: string;
 }
@@ -289,6 +328,15 @@ export const api = {
     del(`/api/v1/campaigns/${id}`, tenantId),
   triggerCampaign: (tenantId: string, id: string) =>
     post<TriggerResult>(`/api/v1/campaigns/${id}/trigger`, tenantId, {}),
+  listRuns: (tenantId: string, campaignId: string, cursor?: string) =>
+    get<ListPage<RunData>>(
+      `/api/v1/campaigns/${campaignId}/runs${cursor ? `?cursor=${cursor}` : ""}`,
+      tenantId
+    ),
+  getRun: (tenantId: string, campaignId: string, runId: string) =>
+    get<RunData>(`/api/v1/campaigns/${campaignId}/runs/${runId}`, tenantId),
+  getCampaignStats: (tenantId: string, campaignId: string) =>
+    get<CampaignStats>(`/api/v1/campaigns/${campaignId}/stats`, tenantId),
 
   // Leads
   listLeads: (
@@ -334,6 +382,24 @@ export const api = {
     get<CustomerData>(`/api/v1/customers/${id}`, tenantId),
   patchCustomer: (tenantId: string, id: string, body: Partial<CustomerData>) =>
     patch<CustomerData>(`/api/v1/customers/${id}`, tenantId, body),
+
+  // Contacts
+  listContacts: (
+    tenantId: string,
+    params?: { customer_id?: string; cursor?: string }
+  ) => {
+    const q = new URLSearchParams();
+    if (params?.customer_id) q.set("customer_id", params.customer_id);
+    if (params?.cursor) q.set("cursor", params.cursor);
+    return get<ListPage<ContactData>>(
+      `/api/v1/contacts${q.toString() ? `?${q}` : ""}`,
+      tenantId
+    );
+  },
+  getContact: (tenantId: string, id: string) =>
+    get<ContactData>(`/api/v1/contacts/${id}`, tenantId),
+  patchContact: (tenantId: string, id: string, body: { approved_for_outreach?: boolean; outreach_stopped?: boolean }) =>
+    patch<ContactData>(`/api/v1/contacts/${id}`, tenantId, body),
 
   // Approvals
   listApprovals: (

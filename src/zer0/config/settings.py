@@ -8,8 +8,12 @@ config). Tenant-specific secrets (OAuth tokens, WhatsApp keys, Slack webhooks)
 are stored encrypted in the database — never in .env.
 """
 
-from pydantic import Field
+import logging
+
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_log = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
@@ -33,22 +37,43 @@ class Settings(BaseSettings):
     # Web search — empty string disables discovery at runtime
     tavily_api_key: str = Field("", description="Tavily search API key. Leave blank to disable discovery.")
 
-    # JWT auth — unused while UI is open; kept for future hardening
-    jwt_secret: str = Field("", description="Secret key for signing JWTs. Optional while auth is disabled.")
+    # JWT auth — required in production; optional while OAuth login is not yet implemented.
+    # Spec: spec/product/09-api.md §Auth — every route except /health requires JWT.
+    # TODO: make required (Field(...)) once Google OAuth login is implemented.
+    jwt_secret: str = Field("", description="Secret key for signing JWTs. Leave blank only in local dev.")
     jwt_algorithm: str = Field("HS256")
 
-    # Encryption key for tenant credentials at rest
+    # Encryption key for tenant credentials at rest.
+    # Spec: spec/engineering/secret-hygiene.md — credentials stored encrypted.
+    # Required before any outreach run; empty disables credential encryption (dev only).
     credential_encryption_key: str = Field(
-        "", description="Fernet key for encrypting tenant credentials. Required when sending outreach."
+        "", description="Fernet key for encrypting tenant credentials. Required in production."
     )
 
     # Server
     log_level: str = Field("INFO")
     debug: bool = Field(False)
-    # Comma-separated origins allowed to call the API from a browser.
-    # In dev: set ZER0_CORS_ORIGINS=http://localhost:3000,http://localhost:3001
-    # In prod (loopback UI): leave empty — the served static files are same-origin.
     cors_origins: str = Field("", description="Comma-separated allowed CORS origins.")
+
+    @model_validator(mode="after")
+    def _warn_missing_secrets(self) -> "Settings":
+        """Emit loud warnings when production-critical secrets are absent.
+
+        Spec: spec/engineering/secret-hygiene.md — secrets must be set in prod.
+        We warn rather than raise so local dev without these keys still works.
+        """
+        if not self.jwt_secret:
+            _log.warning(
+                "ZER0_JWT_SECRET is not set. JWT authentication is disabled. "
+                "Set this before exposing the API publicly."
+            )
+        if not self.credential_encryption_key:
+            _log.warning(
+                "ZER0_CREDENTIAL_ENCRYPTION_KEY is not set. "
+                "Tenant credentials cannot be encrypted; outreach channels will not work. "
+                "Set a Fernet key before running outreach."
+            )
+        return self
 
 
 _settings: Settings | None = None

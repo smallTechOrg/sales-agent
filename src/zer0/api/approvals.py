@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from zer0.api._common import api_error, get_current_tenant_id, ok, paginated
 from zer0.db import LeadRow, MessageRow, get_session
+from zer0.db.models import ContactRow
 from zer0.observability.events import write_event
 
 router = APIRouter(prefix="/approvals")
@@ -43,7 +44,7 @@ def list_pending_approvals(
     if type in (None, "qualify"):
         leads_q = session.query(LeadRow).filter(
             LeadRow.tenant_id == tenant_id,
-            LeadRow.stage == "qualified",
+            LeadRow.stage == "approval",  # LeadStage.approval — awaiting human review
         )
         if campaign_id:
             leads_q = leads_q.filter(LeadRow.campaign_id == campaign_id)
@@ -57,9 +58,9 @@ def list_pending_approvals(
                 "campaign_id": lead.campaign_id,
                 "stage": lead.stage,
                 "score": float(lead.score) if lead.score is not None else None,
-                "name": lead.name,
-                "company": lead.company,
-                "url": lead.url,
+                "name": lead.company_name,
+                "company": lead.company_name,
+                "url": lead.domain,
                 "rationale": lead.rationale,
             }
             for lead in pending_leads
@@ -113,7 +114,14 @@ def qualify_approval(
         raise api_error("NOT_FOUND", "Lead not found", 404)
 
     if body.decision == "approve":
-        row.stage = "approved"
+        # Move lead to outreach stage so the next run picks it up.
+        # Spec: spec/product/04-capabilities/08-approval.md — approve → outreach
+        row.stage = "outreach"
+        # Mark all contacts for this lead as approved for outreach.
+        session.query(ContactRow).filter(
+            ContactRow.lead_id == lead_id,
+            ContactRow.tenant_id == tenant_id,
+        ).update({"approved_for_outreach": True})
         event_type = "approval.granted"
     else:
         row.stage = "rejected"

@@ -19,6 +19,8 @@ export function Sidebar() {
     ? [
         { label: "Overview", href: `/${activeTenantId}` },
         { label: "Offerings", href: `/${activeTenantId}/offerings` },
+        { label: "Customers", href: `/${activeTenantId}/customers` },
+        { label: "Contacts", href: `/${activeTenantId}/contacts` },
         { label: "Approvals", href: `/${activeTenantId}/approvals` },
         { label: "Messages", href: `/${activeTenantId}/messages` },
         { label: "Events", href: `/${activeTenantId}/events` },

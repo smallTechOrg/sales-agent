@@ -17,7 +17,9 @@ from sqlalchemy.orm import Session
 from zer0.api._common import api_error, get_current_tenant_id, ok
 from zer0.db import TenantRow, get_session
 
-# Plural router — unauthenticated tenant creation
+# Plural router — unauthenticated tenant bootstrap endpoints.
+# Spec: spec/product/09-api.md §Auth: "every route except GET /health and POST /auth/token
+# requires JWT" — TODO: enforce once Google OAuth login is implemented (spec phase 2).
 tenants_router = APIRouter(prefix="/tenants")
 
 # Singular router — operations on an existing tenant (requires X-Tenant-ID)

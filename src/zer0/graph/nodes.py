@@ -33,6 +33,7 @@ from zer0.tools import (
     enrich_lead,
     find_all_contacts,
     identify_leads,
+    linkedin_search,
     qualify_lead,
     scrape_page,
     send_email,
@@ -119,7 +120,7 @@ def node_discover(state: AgentState) -> dict:
     }
 
     non_web_source_map = {
-        "linkedin": (directory_search, LinkSourceModel.linkedin),
+        "linkedin": (linkedin_search, LinkSourceModel.linkedin),
         "directory": (directory_search, LinkSourceModel.directory),
     }
 

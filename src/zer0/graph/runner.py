@@ -32,22 +32,22 @@ def _preload_links(campaign_id: str, tenant_id: str) -> list[Link]:
                 .filter(LinkRow.tenant_id == tenant_id)
                 .all()
             )
-        links = []
-        for row in rows:
-            try:
-                source = LinkSource(row.source)
-            except ValueError:
-                source = LinkSource.web
-            links.append(Link(
-                id=row.id,
-                tenant_id=row.tenant_id,
-                campaign_id=row.campaign_id,
-                url=row.url,
-                source=source,
-                page_text=row.page_text,
-                scraped_at=row.scraped_at,
-                identified_at=row.identified_at,
-            ))
+            links = []
+            for row in rows:
+                try:
+                    source = LinkSource(row.source)
+                except ValueError:
+                    source = LinkSource.web
+                links.append(Link(
+                    id=row.id,
+                    tenant_id=row.tenant_id,
+                    campaign_id=row.campaign_id,
+                    url=row.url,
+                    source=source,
+                    page_text=row.page_text,
+                    scraped_at=row.scraped_at,
+                    identified_at=row.identified_at,
+                ))
         log.info("runner.links_preloaded", campaign_id=campaign_id, count=len(links))
         return links
     except Exception as exc:
