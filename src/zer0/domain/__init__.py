@@ -17,6 +17,7 @@ from zer0.domain.config import (
     RubricCriterion,
 )
 from zer0.domain.contact import Contact
+from zer0.domain.customer import Customer
 from zer0.domain.lead import (
     Lead,
     LeadStage,
@@ -44,8 +45,9 @@ __all__ = [
     "QualificationConfig",
     "ResolvedConfig",
     "RubricCriterion",
-    # lead
+    # entities
     "Contact",
+    "Customer",
     "Lead",
     "LeadStage",
     "Link",

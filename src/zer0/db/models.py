@@ -118,6 +118,31 @@ class CampaignRow(Base):
 # links  (raw URLs discovered by the discover node)
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# customers  (tenant-wide persistent company knowledge base)
+# ---------------------------------------------------------------------------
+
+class CustomerRow(Base):
+    __tablename__ = "customers"
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid)
+    tenant_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("tenants.id"), nullable=False, index=True)
+    domain: Mapped[str] = mapped_column(Text, nullable=False)
+    company_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    industry: Mapped[str | None] = mapped_column(Text, nullable=True)
+    headcount_range: Mapped[str | None] = mapped_column(Text, nullable=True)
+    business_type: Mapped[str | None] = mapped_column(Text, nullable=True)
+    research_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    signals: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    first_seen_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    last_enriched_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False, default=_now)
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False, default=_now, onupdate=_now)
+
+    leads: Mapped[list[LeadRow]] = relationship(back_populates="customer")
+
+
 class LinkRow(Base):
     __tablename__ = "links"
 
@@ -128,6 +153,7 @@ class LinkRow(Base):
     source: Mapped[str] = mapped_column(String(32), nullable=False)  # web | linkedin | directory
     page_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     scraped_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    identified_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False, default=_now)
 
     campaign: Mapped[CampaignRow] = relationship(back_populates="links")
@@ -145,6 +171,7 @@ class LeadRow(Base):
     tenant_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("tenants.id"), nullable=False, index=True)
     campaign_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("campaigns.id"), nullable=False, index=True)
     link_id: Mapped[str | None] = mapped_column(UUID(as_uuid=False), ForeignKey("links.id"), nullable=True, index=True)
+    customer_id: Mapped[str | None] = mapped_column(UUID(as_uuid=False), ForeignKey("customers.id"), nullable=True, index=True)
     stage: Mapped[str] = mapped_column(String(32), nullable=False, default="prospect")
     company_name: Mapped[str | None] = mapped_column(Text, nullable=True)
     domain: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -165,6 +192,7 @@ class LeadRow(Base):
 
     campaign: Mapped[CampaignRow] = relationship(back_populates="leads")
     link: Mapped[LinkRow | None] = relationship(back_populates="leads")
+    customer: Mapped[CustomerRow | None] = relationship(back_populates="leads")
     contacts: Mapped[list[ContactRow]] = relationship(back_populates="lead")
     messages: Mapped[list[MessageRow]] = relationship(back_populates="lead")
     replies: Mapped[list[ReplyRow]] = relationship(back_populates="lead")
