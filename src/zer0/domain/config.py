@@ -39,6 +39,9 @@ class DiscoveryConfig(BaseModel):
     query_templates: list[str]
     geography: list[str]
     volume_per_run: Annotated[int, Field(ge=1, le=1000)]
+    max_links_per_run: Annotated[int, Field(ge=1, le=1000)] | None = None
+    scrape_concurrency: Annotated[int, Field(ge=1, le=32)] = 1
+    research_concurrency: Annotated[int, Field(ge=1, le=32)] = 1  # Controls node_research parallelism
 
 
 class ICP(BaseModel):

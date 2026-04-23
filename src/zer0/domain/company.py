@@ -24,6 +24,8 @@ class Company(BaseModel):
     industry: Optional[str] = None
     headcount_range: Optional[str] = None
     business_type: Optional[str] = None
+    website: Optional[str] = None  # Canonical company website URL (fill-if-null)
+    description: Optional[str] = None  # One-paragraph "what the company does" (fill-if-null)
     research_summary: Optional[str] = None
     signals: list[str] = []
     notes: Optional[str] = None

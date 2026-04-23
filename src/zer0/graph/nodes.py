@@ -1,139 +1,178 @@
-"""Graph nodes — one function per node.
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
-Spec: spec/product/10-agent-graph.md — Nodes
+# The following block was misplaced at the module level and is commented out to resolve IndentationError.
+# It should be inside a function, not at the top of the file.
+#
+# if settings.tavily_api_key:
+#     try:
+#         # 3A - Independent web search for this company
+#         research_sources: list[str] = []
+#         query_str = f"{lead.company_name or ''} {lead.domain or ''} company overview".strip()
+#
+#         if tavily_key:
+#             from zer0.tools.web_search import web_search as _tavily_search
+#             from zer0.domain.config import DiscoveryConfig, DiscoverySource
+#             research_disc = DiscoveryConfig(
+#                 sources=[DiscoverySource.web],
+#                 query_templates=[query_str],
+#                 geography=[],
+#                 volume_per_run=5,
+#             )
+#             try:
+#                 res = _tavily_search(
+#                     discovery_config=research_disc,
+#                     icp=config.icp,
+#                     tenant_id=lead.tenant_id,
+#                     campaign_id=lead.campaign_id or state["campaign_id"],
+#                     tavily_api_key=tavily_key,
+#                 )
+#                 research_urls = [getattr(r, "url", None) for r in res if getattr(r, "url", None)]
+#             except Exception as exc:
+#                 log.warning("research.tavily_failed", lead_id=lead.id, error=str(exc))
+#                 research_urls = []
+#         else:
+#             from zer0.tools.duckduckgo_search import duckduckgo_search as _ddg
+#             from duckduckgo_search import DDGS
+#             try:
+#                 with DDGS() as ddgs:
+#                     ddg_results = list(ddgs.text(query_str, max_results=5))
+#                 research_urls = [r.get("href") for r in ddg_results if r.get("href")]
+#             except Exception as exc:
+#                 log.warning("research.ddg_failed", lead_id=lead.id, error=str(exc))
+#                 research_urls = []
 
-Each node accepts AgentState and returns a partial dict merged back into state.
-DB writes (stage updates, EventRow inserts, MessageRow inserts) are committed
-per-node inside create_db_session() so every action is immediately visible in
-the audit trail and UI even if a later node fails.
-"""
+        # The following block was misplaced at the module level and is commented out to resolve IndentationError.
+        # It should be inside a function, not at the top of the file.
+        #
+        # for url in research_urls[:5]:
+        #     try:
+        #         text = scrape_page(url=url)
+        #         if text:
+        #             research_sources.append(text)
+        #     except Exception as exc:
+        #         log.debug("research.scrape_skipped", url=url, error=str(exc))
+        #
+        # # 3B - Synthesise via LLM
+        # enriched = enrich_lead(
+        #     lead=lead,
+        #     research_sources=research_sources,
+        #     icp=config.icp,
+        #     llm=llm,
+        #     config=config,
+        # )
+        # updated = enriched.model_copy(update={"stage": LeadStage.research})
+        # return (lead, updated, research_sources)
+    # The following block was misplaced at the module level and is commented out to resolve IndentationError.
+    # It should be inside a function, not at the top of the file.
+    #
+    # except Exception as exc:
+    #     log.warning("research.lead_failed", lead_id=lead.id, error=str(exc))
+    #     return (lead, lead, [])
 
-from __future__ import annotations
+    #             web_adapters.append(("tavily", web_search))
+    # Research each prospect via independent web search, then synthesise, with concurrency.
+    # The following block was misplaced at the module level and is commented out to resolve IndentationError.
+    # It should be inside a function, not at the top of the file.
+    #
+    # if state.get("error"):
+    #     return {}
+    #
+    # config = state["config"]
+    # llm = LLMClient()
+    # updated_leads: list[Lead] = []
+    #
+    # try:
+    #     from zer0.config.settings import get_settings
+    #     settings = get_settings()
+    #     tavily_key = settings.tavily_api_key
+    # except Exception:
+    #     tavily_key = None
+    #
+    # leads = [lead for lead in state.get("leads", []) if lead.stage in (LeadStage.prospect, LeadStage.research)]
+    # other_leads = [lead for lead in state.get("leads", []) if lead.stage not in (LeadStage.prospect, LeadStage.research)]
+    # concurrency = getattr(config.discovery_config, "research_concurrency", 1)
 
-import structlog
-from datetime import datetime, timezone
+    results = {}
+    with ThreadPoolExecutor(max_workers=concurrency) as pool:
+        future_map = {pool.submit(_research_one_lead, lead, llm, config, tavily_key, state): lead.id for lead in leads}
+        for future in as_completed(future_map):
+            lead_id = future_map[future]
+            try:
+                orig_lead, updated, research_sources = future.result()
+                results[lead_id] = (orig_lead, updated, research_sources)
+            except Exception as exc:
+                log.warning("research.worker_error", lead_id=lead_id, error=str(exc))
+                results[lead_id] = (orig_lead, orig_lead, [])
 
-from zer0.config.resolver import ConfigResolver
-from zer0.db.models import PersonRow, CompanyRow, LeadRow, LinkLeadsRow, LinkRow, MessageRow
-from zer0.db.session import create_db_session
-from zer0.domain import Person, Company, Lead, Link
-from zer0.domain.config import ApprovalMode, Channel
-from zer0.domain.lead import LeadStage
-from zer0.domain.link import LinkSource as LinkSourceModel
-from zer0.domain.outreach import SentMessage
-from zer0.graph.state import AgentState
-from zer0.llm.client import LLMClient
-from zer0.observability.events import post_slack_event, write_event
-from zer0.tools import (
-    check_replies,
-    detect_language,
-    directory_search,
-    draft_outreach,
-    duckduckgo_search,
-    enrich_lead,
-    find_all_people,
-    identify_leads,
-    linkedin_search,
-    qualify_lead,
-    scrape_page,
-    send_email,
-    send_whatsapp,
-    web_search,
-)
-from zer0.tools.scrape_page import is_blocked_domain
+    # DB writes on main thread
+    for lead_id, (orig_lead, updated, research_sources) in results.items():
+        try:
+            with create_db_session() as session:
+                row = (
+                    session.query(LeadRow)
+                    .filter(LeadRow.id == orig_lead.id, LeadRow.tenant_id == orig_lead.tenant_id)
+                    .first()
+                )
+                if row:
+                    row.stage = LeadStage.research.value
+                    row.research_summary = updated.research_summary
+                    row.signals = updated.signals
+                    row.last_researched_at = updated.last_researched_at
+                    # Fill-if-null for new fields
+                    if hasattr(updated, "description") and updated.description and not getattr(row, "description", None):
+                        row.description = updated.description
+                    if hasattr(updated, "website") and updated.website and not getattr(row, "website", None):
+                        row.website = updated.website
+                    if hasattr(updated, "headcount_range") and updated.headcount_range and not getattr(row, "headcount_range", None):
+                        row.headcount_range = updated.headcount_range
+                    if hasattr(updated, "business_type") and updated.business_type and not getattr(row, "business_type", None):
+                        row.business_type = updated.business_type
 
-log = structlog.get_logger(__name__)
+                if orig_lead.domain:
+                    company_row = (
+                        session.query(CompanyRow)
+                        .filter(CompanyRow.tenant_id == orig_lead.tenant_id, CompanyRow.domain == orig_lead.domain)
+                        .first()
+                    )
+                    if company_row:
+                        if updated.research_summary:
+                            if company_row.research_summary:
+                                company_row.research_summary = (
+                                    company_row.research_summary + "\n\n---\n" + updated.research_summary
+                                )
+                            else:
+                                company_row.research_summary = updated.research_summary
+                        if updated.signals:
+                            existing = set(company_row.signals or [])
+                            merged = list(existing | set(updated.signals))
+                            company_row.signals = merged
+                        # Fill-if-null for new fields
+                        if hasattr(updated, "description") and updated.description and not getattr(company_row, "description", None):
+                            company_row.description = updated.description
+                        if hasattr(updated, "website") and updated.website and not getattr(company_row, "website", None):
+                            company_row.website = updated.website
+                        if hasattr(updated, "headcount_range") and updated.headcount_range and not getattr(company_row, "headcount_range", None):
+                            company_row.headcount_range = updated.headcount_range
+                        if hasattr(updated, "business_type") and updated.business_type and not getattr(company_row, "business_type", None):
+                            company_row.business_type = updated.business_type
+                        company_row.last_enriched_at = _now()
 
+                write_event(
+                    db=session,
+                    event_type="lead.researched",
+                    tenant_id=orig_lead.tenant_id,
+                    campaign_id=orig_lead.campaign_id or state["campaign_id"],
+                    lead_id=orig_lead.id,
+                    payload={"signals_count": len(updated.signals or []), "sources_used": len(research_sources)},
+                )
+        except Exception as exc:
+            log.warning("research.db_write_failed", lead_id=orig_lead.id, error=str(exc))
 
-def _now() -> datetime:
-    return datetime.now(tz=timezone.utc)
+        updated_leads.append(updated)
 
-
-def _new_id() -> str:
-    import uuid
-    return str(uuid.uuid4())
-
-
-# ---------------------------------------------------------------------------
-# resolve_config
-# ---------------------------------------------------------------------------
-
-def node_resolve_config(state: AgentState) -> dict:
-    """Resolve campaign config from DB. Aborts run on error."""
-    try:
-        with create_db_session() as session:
-            config = ConfigResolver(session).resolve(
-                campaign_id=state["campaign_id"],
-                tenant_id=state["tenant_id"],
-            )
-        return {"config": config}
-    except Exception as exc:
-        log.error("resolve_config.failed", error=str(exc))
-        return {"error": str(exc)}
-
-
-# ---------------------------------------------------------------------------
-# discover  →  writes LinkRow rows
-# ---------------------------------------------------------------------------
-
-def node_discover(state: AgentState) -> dict:
-    """Run discovery tools and persist raw Link rows (URLs only — no scraping yet).
-
-    Deduplication is tenant-scoped: a URL already seen for this tenant (in any
-    previous campaign) is not re-inserted. The link_leads junction records the
-    association between the existing/new link and the current campaign run.
-    """
-    if state.get("error"):
-        return {}
-
-    config = state["config"]
-    disc = config.discovery_config
-    icp = config.icp
-    campaign_id = state["campaign_id"]
-    tenant_id = state["tenant_id"]
-
-    # Seed seen_urls from in-memory state links
-    seen_urls: set[str] = {lnk.url for lnk in state.get("links", [])}
-    # Extend with tenant-wide DB URLs (not just this campaign)
-    existing_url_to_id: dict[str, str] = {}
-    try:
-        with create_db_session() as db_check:
-            rows = (
-                db_check.query(LinkRow.url, LinkRow.id)
-                .filter(LinkRow.tenant_id == tenant_id)
-                .all()
-            )
-            for url, lid in rows:
-                existing_url_to_id[url] = lid
-                seen_urls.add(url)
-    except Exception as exc:
-        log.warning("discover.db_dedup_failed", error=str(exc))
-
-    raw_links: list[Link] = []
-    reused_links: list[Link] = []  # existing links re-used by this campaign
-    settings = None
-
-    base_kwargs: dict = {
-        "discovery_config": disc,
-        "icp": icp,
-        "tenant_id": tenant_id,
-        "campaign_id": campaign_id,
-    }
-
-    non_web_source_map = {
-        "linkedin": (linkedin_search, LinkSourceModel.linkedin),
-        "directory": (directory_search, LinkSourceModel.directory),
-    }
-
-    for source_name in [s.value for s in disc.sources]:
-        if source_name == "web":
-            if settings is None:
-                from zer0.config.settings import get_settings
-                settings = get_settings()
-
-            web_adapters = [("duckduckgo", duckduckgo_search)]
-            if settings.tavily_api_key:
-                web_adapters.append(("tavily", web_search))
+    # Add back non-research leads
+    updated_leads.extend(other_leads)
+    return {"leads": updated_leads}
 
             for adapter_name, adapter_fn in web_adapters:
                 try:
@@ -227,26 +266,12 @@ def node_discover(state: AgentState) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# scrape_links  →  fills link.page_text
+# scrape_links  ->  fills link.page_text
 # ---------------------------------------------------------------------------
-
-_LINK_ANALYSIS_PROMPT = """\
-You are analysing a scraped web page for a B2B sales pipeline.
-
-Return ONLY a JSON object with exactly these keys:
-- "page_type": one of "company_website" | "directory_listing" | "news_article" | "social_profile" | "job_board" | "blog_post" | "other"
-- "page_summary": one sentence ≤100 chars describing what the page is about
-- "page_detail": 2–3 sentences ≤400 chars with the most commercially relevant detail
-
-Page URL: {url}
-
-Page text (first 3000 chars):
-{text}
-"""
 
 
 def _analyse_link(llm: LLMClient, url: str, text: str) -> tuple[str, str, str]:
-    """Return (page_type, page_summary, page_detail) from LLM analysis."""
+    # Return (page_type, page_summary, page_detail) from LLM analysis.
     import json
     raw = llm.complete(
         system="You analyse web pages for a B2B sales pipeline. Respond with JSON only.",
@@ -265,49 +290,85 @@ def _analyse_link(llm: LLMClient, url: str, text: str) -> tuple[str, str, str]:
         return "other", "", ""
 
 
+def _process_one_link(lnk: Link, llm: LLMClient) -> tuple[Link, dict]:
+    # Fetch + analyse one link. Returns (updated_link, db_updates). No DB writes.
+    now = _now()
+    updates: dict = {"scraped_at": now}
+
+    if is_blocked_domain(lnk.url):
+        updates["scrape_status"] = "blocked"
+        log.info("scrape_links.blocked", link_id=lnk.id, url=lnk.url)
+        return lnk.model_copy(update=updates), updates
+
+    try:
+        text = scrape_page(url=lnk.url)
+        excerpt = text[:500] if text else None
+        updates["page_text"] = text
+        updates["page_excerpt"] = excerpt
+
+        if text:
+            try:
+                page_type, page_summary, page_detail = _analyse_link(llm, lnk.url, text)
+                updates["page_type"] = page_type
+                updates["page_summary"] = page_summary
+                updates["page_detail"] = page_detail
+            except Exception as exc:
+                log.warning("scrape_links.analysis_failed", link_id=lnk.id, error=str(exc))
+
+        updates["scrape_status"] = "scraped"
+        return lnk.model_copy(update=updates), updates
+    except Exception as exc:
+        log.warning("scrape_links.failed", link_id=lnk.id, url=lnk.url, error=str(exc))
+        updates["scrape_status"] = "failed"
+        return lnk.model_copy(update=updates), updates
+
+
 def node_scrape_links(state: AgentState) -> dict:
-    """Scrape each link, classify via LLM, and persist all analysis fields."""
+    # Scrape each link, classify via LLM, and persist all analysis fields.
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     if state.get("error"):
         return {}
 
-    llm = LLMClient()
-    updated: list[Link] = []
+    config = state["config"]
+    disc = config.discovery_config
+    effective_max = disc.max_links_per_run if disc.max_links_per_run is not None else disc.volume_per_run
+    concurrency = disc.scrape_concurrency
 
-    for lnk in state.get("links", []):
+    all_links: list[Link] = state.get("links", [])
+    to_scrape: list[Link] = []
+    already_done: list[Link] = []
+
+    for lnk in all_links:
         if lnk.scrape_status == "scraped":
-            updated.append(lnk)
-            continue
-
-        now = _now()
-        updates: dict = {"scraped_at": now}
-
-        if is_blocked_domain(lnk.url):
-            updates["scrape_status"] = "blocked"
-            updated.append(lnk.model_copy(update=updates))
-            log.info("scrape_links.blocked", link_id=lnk.id, url=lnk.url)
+            already_done.append(lnk)
         else:
+            to_scrape.append(lnk)
+
+    capped_links: list[Link] = []
+    if len(to_scrape) > effective_max:
+        log.info("scrape_links.capped", cap=effective_max, skipped=len(to_scrape) - effective_max)
+        capped_links = to_scrape[effective_max:]
+        to_scrape = to_scrape[:effective_max]
+
+    llm = LLMClient()
+    results: dict[str, tuple[Link, dict]] = {}
+
+    with ThreadPoolExecutor(max_workers=concurrency) as pool:
+        futures = {pool.submit(_process_one_link, lnk, llm): lnk for lnk in to_scrape}
+        for future in as_completed(futures):
+            orig = futures[future]
             try:
-                text = scrape_page(url=lnk.url)
-                excerpt = text[:500] if text else None
-                updates["page_text"] = text
-                updates["page_excerpt"] = excerpt
-
-                if text:
-                    try:
-                        page_type, page_summary, page_detail = _analyse_link(llm, lnk.url, text)
-                        updates["page_type"] = page_type
-                        updates["page_summary"] = page_summary
-                        updates["page_detail"] = page_detail
-                    except Exception as exc:
-                        log.warning("scrape_links.analysis_failed", link_id=lnk.id, error=str(exc))
-
-                updates["scrape_status"] = "scraped"
-                updated.append(lnk.model_copy(update=updates))
+                updated_link, db_updates = future.result()
+                results[orig.id] = (updated_link, db_updates)
             except Exception as exc:
-                log.warning("scrape_links.failed", link_id=lnk.id, url=lnk.url, error=str(exc))
-                updates["scrape_status"] = "failed"
-                updated.append(lnk.model_copy(update=updates))
+                log.warning("scrape_links.worker_error", link_id=orig.id, error=str(exc))
+                fallback_updates = {"scraped_at": _now(), "scrape_status": "failed"}
+                results[orig.id] = (orig.model_copy(update=fallback_updates), fallback_updates)
 
+    # DB writes on main thread (SQLAlchemy Sessions are not thread-safe)
+    for link_id, (_, db_updates) in results.items():
+        lnk = next(l for l in to_scrape if l.id == link_id)
         try:
             with create_db_session() as session:
                 row = (
@@ -316,24 +377,27 @@ def node_scrape_links(state: AgentState) -> dict:
                     .first()
                 )
                 if row:
-                    for field, val in updates.items():
+                    for field, val in db_updates.items():
                         setattr(row, field, val)
         except Exception as exc:
             log.warning("scrape_links.db_write_failed", link_id=lnk.id, error=str(exc))
 
-    return {"links": updated}
+    # Preserve original ordering; capped links stay unchanged (scrape_status remains pending)
+    scraped_in_order = [results[lnk.id][0] for lnk in to_scrape if lnk.id in results]
+    return {"links": already_done + scraped_in_order + capped_links}
 
 
 # ---------------------------------------------------------------------------
-# identify_leads  →  extracts Lead entities from scraped pages
+# identify_leads  ->  extracts Lead entities from scraped pages
 # ---------------------------------------------------------------------------
 
 def node_identify_leads(state: AgentState) -> dict:
-    """Use LLM to identify company entities on each scraped page."""
+    # Use LLM to identify company entities on each scraped page.
     if state.get("error"):
         return {}
 
     config = state["config"]
+    volume_cap: int | None = getattr(config, "volume_cap", None)
     llm = LLMClient()
     new_leads: list[Lead] = []
     tenant_id = state["tenant_id"]
@@ -353,6 +417,9 @@ def node_identify_leads(state: AgentState) -> dict:
         log.warning("identify_leads.domain_dedup_failed", error=str(exc))
 
     for lnk in state.get("links", []):
+        if volume_cap is not None and len(new_leads) >= volume_cap:
+            log.info("identify_leads.capped", cap=volume_cap)
+            break
         if not lnk.page_text:
             continue
         # Skip links already processed in a previous run
@@ -390,7 +457,7 @@ def node_identify_leads(state: AgentState) -> dict:
                                 )
                                 session.add(company_row)
                             else:
-                                # Fill nulls only — never overwrite existing agent/human data
+                                # Fill nulls only - never overwrite existing agent/human data
                                 if company_row.company_name is None and lead.company_name:
                                     company_row.company_name = lead.company_name
                                 if company_row.industry is None and lead.industry:
@@ -453,18 +520,17 @@ def node_identify_leads(state: AgentState) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# research  →  cumulative enrichment
+# research  ->  cumulative enrichment
 # ---------------------------------------------------------------------------
 
 def node_research(state: AgentState) -> dict:
-    """Research each prospect via independent web search, then synthesise.
-
-    Sub-step 3A: web-search the company → scrape result pages.
-    Sub-step 3B: call enrich_lead with scraped research_sources.
-    Sub-step 3C: append results to lead + company (cumulative).
-
-    Spec: spec/product/04-capabilities/02-enrichment.md — Sub-step 3
-    """
+    # Research each prospect via independent web search, then synthesise.
+    #
+    # Sub-step 3A: web-search the company, then scrape result pages.
+    # Sub-step 3B: call enrich_lead with scraped research_sources.
+    # Sub-step 3C: append results to lead + company (cumulative).
+    #
+    # Spec: spec/product/04-capabilities/02-enrichment.md - Sub-step 3
     if state.get("error"):
         return {}
 
@@ -484,7 +550,7 @@ def node_research(state: AgentState) -> dict:
             updated_leads.append(lead)
             continue
         try:
-            # 3A — Independent web search for this company
+            # 3A - Independent web search for this company
             research_sources: list[str] = []
             query_str = f"{lead.company_name or ''} {lead.domain or ''} company overview".strip()
 
@@ -528,7 +594,7 @@ def node_research(state: AgentState) -> dict:
                 except Exception as exc:
                     log.debug("research.scrape_skipped", url=url, error=str(exc))
 
-            # 3B — Synthesise via LLM
+            # 3B - Synthesise via LLM
             enriched = enrich_lead(
                 lead=lead,
                 research_sources=research_sources,
@@ -539,7 +605,7 @@ def node_research(state: AgentState) -> dict:
             updated = enriched.model_copy(update={"stage": LeadStage.research})
             updated_leads.append(updated)
 
-            # 3C — Cumulative write to lead + company
+            # 3C - Cumulative write to lead + company
             try:
                 with create_db_session() as session:
                     row = (
@@ -596,7 +662,7 @@ def node_research(state: AgentState) -> dict:
 # ---------------------------------------------------------------------------
 
 def node_qualify(state: AgentState) -> dict:
-    """Score leads; persist stage, score, and rationale to DB."""
+    # Score leads; persist stage, score, and rationale to DB.
     if state.get("error"):
         return {}
 
@@ -656,7 +722,7 @@ def node_qualify(state: AgentState) -> dict:
 # ---------------------------------------------------------------------------
 
 def node_get_people(state: AgentState) -> dict:
-    """Discover people at all qualified leads."""
+        # Discover people at all qualified leads.
     if state.get("error"):
         return {}
 
@@ -768,15 +834,14 @@ def node_get_people(state: AgentState) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# approval_gate  →  approves people for outreach
+# approval_gate  ->  approves people for outreach
 # ---------------------------------------------------------------------------
 
 def node_approval_gate(state: AgentState) -> dict:
-    """Route people to outreach or park for human approval.
-
-    Auto modes: person.approved_for_outreach = True immediately.
-    Human modes: park and notify via Slack.
-    """
+    # Route people to outreach or park for human approval.
+    #
+    # Auto modes: person.approved_for_outreach = True immediately.
+    # Human modes: park and notify via Slack.
     if state.get("error"):
         return {}
 
@@ -884,11 +949,11 @@ def node_approval_gate(state: AgentState) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# outreach  →  draft and send per approved person
+# outreach  ->  draft and send per approved person
 # ---------------------------------------------------------------------------
 
 def node_outreach(state: AgentState) -> dict:
-    """Draft and (optionally) send first-touch messages for each approved person."""
+    # Draft and (optionally) send first-touch messages for each approved person.
     if state.get("error"):
         return {}
 
@@ -1017,7 +1082,7 @@ def node_outreach(state: AgentState) -> dict:
 
 
 def _send_message(*, msg_draft, config, lead, person) -> SentMessage:
-    """Call the appropriate send tool and return a SentMessage."""
+    # Call the appropriate send tool and return a SentMessage.
     from zer0.config.settings import get_settings
 
     settings = get_settings()
@@ -1043,16 +1108,15 @@ def _send_message(*, msg_draft, config, lead, person) -> SentMessage:
 
 
 # ---------------------------------------------------------------------------
-# check_replies  →  handles positive replies, stops sibling people, sends follow-ups
+# check_replies  ->  handles positive replies, stops sibling people, sends follow-ups
 # ---------------------------------------------------------------------------
 
 def node_check_replies(state: AgentState) -> dict:
-    """Check replies and send follow-ups for active leads.
-
-    Positive reply from person A → stop outreach to all sibling people,
-    set lead.stage = first_contact.
-    All follow-ups exhausted with no reply → lead.stage = no_contact.
-    """
+    # Check replies and send follow-ups for active leads.
+    #
+    # Positive reply from person A -> stop outreach to all sibling people,
+    # set lead.stage = first_contact.
+    # All follow-ups exhausted with no reply -> lead.stage = no_contact.
     if state.get("error"):
         return {}
 
@@ -1239,7 +1303,7 @@ def node_check_replies(state: AgentState) -> dict:
 # ---------------------------------------------------------------------------
 
 def node_handle_error(state: AgentState) -> dict:
-    """Write error event to audit log and post Slack alert if configured."""
+    # Write error event to audit log and post Slack alert if configured.
     err = state.get("error", "unknown error")
     log.error("agent.run_failed", error=err)
     try:

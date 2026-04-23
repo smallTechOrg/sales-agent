@@ -132,6 +132,8 @@ class CompanyRow(Base):
     industry: Mapped[str | None] = mapped_column(Text, nullable=True)
     headcount_range: Mapped[str | None] = mapped_column(Text, nullable=True)
     business_type: Mapped[str | None] = mapped_column(Text, nullable=True)
+    website: Mapped[str | None] = mapped_column(Text, nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
     research_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     signals: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)

@@ -45,7 +45,7 @@ def enrich_lead(
         f"Research sources (web search results):\n{combined_sources}\n\n"
         f"Target roles: {', '.join(icp.target_roles)}\n"
         f"Target industries: {', '.join(icp.target_industries)}\n\n"
-        "Return JSON with keys: company_summary (str), recent_signals (list[str])."
+        "Return JSON with keys: company_summary (str), recent_signals (list[str]), description (str), website (str|null), headcount_range (str|null), business_type (str|null)."
     )
 
     raw = llm.complete(system=system, user=user)
@@ -57,14 +57,29 @@ def enrich_lead(
 
     new_summary: str = parsed.get("company_summary", "")
     new_signals: list[str] = parsed.get("recent_signals", [])
+    description: str | None = parsed.get("description")
+    website: str | None = parsed.get("website")
+    headcount_range: str | None = parsed.get("headcount_range")
+    business_type: str | None = parsed.get("business_type")
 
     updated_summary = "\n\n".join(filter(None, [lead.research_summary, new_summary])) or None
     existing_signals = list(lead.signals or [])
     merged_signals = existing_signals + [s for s in new_signals if s not in existing_signals]
 
-    return lead.model_copy(update={
+    # Fill-if-null semantics for new fields
+    update_fields = {
         "research_summary": updated_summary,
         "signals": merged_signals,
         "last_researched_at": datetime.now(tz=timezone.utc),
-    })
+    }
+    if description and not getattr(lead, "description", None):
+        update_fields["description"] = description
+    if website and not getattr(lead, "website", None):
+        update_fields["website"] = website
+    if headcount_range and not getattr(lead, "headcount_range", None):
+        update_fields["headcount_range"] = headcount_range
+    if business_type and not getattr(lead, "business_type", None):
+        update_fields["business_type"] = business_type
+
+    return lead.model_copy(update=update_fields)
 
