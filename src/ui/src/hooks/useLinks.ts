@@ -5,7 +5,7 @@ import { api, type LinkData } from "@/lib/api";
 
 interface UseLinksParams {
   tenantId: string | null;
-  campaignId: string;
+  campaignId?: string;
 }
 
 export function useLinks({ tenantId, campaignId }: UseLinksParams) {

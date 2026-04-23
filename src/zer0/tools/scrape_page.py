@@ -28,22 +28,24 @@ _HEADERS: dict[str, str] = {
 
 _HTML_CONTENT_TYPES = ("text/html", "text/plain", "application/xhtml")
 
-# Domains that systematically block HTTP scraping or require authentication.
-# Attempting to fetch these wastes time and always fails — skip immediately.
+# Domains that require auth/JS or actively block HTTP clients.
+# Links from these domains are saved and marked 'blocked' — not retried per-run
+# but re-attempted when new scrapers are added. LinkedIn is NOT here because
+# public company pages are sometimes accessible.
 _BLOCKED_DOMAINS: frozenset[str] = frozenset({
     "facebook.com", "www.facebook.com", "m.facebook.com",
-    "linkedin.com", "www.linkedin.com",
     "twitter.com", "www.twitter.com", "x.com", "www.x.com",
     "instagram.com", "www.instagram.com",
     "tiktok.com", "www.tiktok.com",
-    "reddit.com", "www.reddit.com", "old.reddit.com",
     "pinterest.com", "www.pinterest.com",
     "snapchat.com", "www.snapchat.com",
     "youtube.com", "www.youtube.com", "youtu.be",
+    "reddit.com", "www.reddit.com", "old.reddit.com",
 })
 
 
-def _is_blocked(url: str) -> bool:
+def is_blocked_domain(url: str) -> bool:
+    """Return True if this URL belongs to a domain we cannot scrape via HTTP."""
     try:
         host = urlparse(url).hostname or ""
         return host in _BLOCKED_DOMAINS
@@ -54,14 +56,11 @@ def _is_blocked(url: str) -> bool:
 def scrape_page(url: str) -> str:
     """Fetch a URL and return cleaned readable text.
 
-    Returns empty string for blocked domains (social networks, auth-gated sites)
-    and for non-HTML content types (PDFs, binary files, etc.) to prevent NUL
-    bytes from crashing PostgreSQL TEXT column writes.
+    Returns empty string for non-HTML content types (PDFs, binary files, etc.)
+    to prevent NUL bytes from crashing PostgreSQL TEXT column writes.
     Raises httpx.HTTPStatusError on 4xx/5xx after following redirects.
+    Callers should check is_blocked_domain() before calling this.
     """
-    if _is_blocked(url):
-        return ""
-
     with httpx.Client(headers=_HEADERS, timeout=15.0, follow_redirects=True) as client:
         response = client.get(url)
     response.raise_for_status()

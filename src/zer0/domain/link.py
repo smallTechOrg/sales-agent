@@ -25,6 +25,10 @@ class Link(BaseModel):
     source: LinkSource
     page_text: str | None = None
     page_excerpt: str | None = None  # first ≤500 chars of page_text — safe to return in API responses
+    scrape_status: str = "pending"   # pending | scraped | failed | blocked
+    page_type: str | None = None
+    page_summary: str | None = None
+    page_detail: str | None = None
     scraped_at: datetime | None = None
     identified_at: datetime | None = None
     created_at: datetime | None = None

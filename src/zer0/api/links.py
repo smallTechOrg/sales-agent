@@ -23,6 +23,10 @@ class LinkOut(BaseModel):
     campaign_id: str | None
     url: str
     source: str
+    scrape_status: str
+    page_type: str | None
+    page_summary: str | None
+    page_detail: str | None
     page_excerpt: str | None
     scraped_at: datetime | None
     identified_at: datetime | None
@@ -44,6 +48,10 @@ def _row_to_out(row: LinkRow) -> LinkOut:
         campaign_id=row.campaign_id,
         url=row.url,
         source=row.source,
+        scrape_status=getattr(row, "scrape_status", "pending"),
+        page_type=getattr(row, "page_type", None),
+        page_summary=getattr(row, "page_summary", None),
+        page_detail=getattr(row, "page_detail", None),
         page_excerpt=row.page_excerpt,
         scraped_at=row.scraped_at,
         identified_at=row.identified_at,
@@ -53,7 +61,7 @@ def _row_to_out(row: LinkRow) -> LinkOut:
 
 @router.get("")
 def list_links(
-    campaign_id: str,
+    campaign_id: str | None = None,
     cursor: str | None = None,
     limit: int = 50,
     tenant_id: str = Depends(get_current_tenant_id),
@@ -62,11 +70,10 @@ def list_links(
     if limit > 200:
         raise api_error("INVALID_REQUEST", "limit must be ≤ 200")
 
-    q = (
-        session.query(LinkRow)
-        .filter(LinkRow.tenant_id == tenant_id, LinkRow.campaign_id == campaign_id)
-        .order_by(LinkRow.created_at.desc())
-    )
+    q = session.query(LinkRow).filter(LinkRow.tenant_id == tenant_id)
+    if campaign_id:
+        q = q.filter(LinkRow.campaign_id == campaign_id)
+    q = q.order_by(LinkRow.created_at.desc())
     if cursor:
         q = q.filter(LinkRow.id < cursor)
 

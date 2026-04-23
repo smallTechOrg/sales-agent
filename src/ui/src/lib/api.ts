@@ -146,6 +146,10 @@ export interface LinkData {
   campaign_id: string;
   url: string;
   source: string;
+  scrape_status: string;
+  page_type: string | null;
+  page_summary: string | null;
+  page_detail: string | null;
   page_excerpt: string | null;
   scraped_at: string | null;
   identified_at: string | null;
@@ -406,10 +410,11 @@ export const api = {
   // Links
   getLink: (tenantId: string, linkId: string) =>
     get<LinkData>(`/api/v1/links/${linkId}`, tenantId),
-  listLinks: (tenantId: string, campaignId: string, cursor?: string) => {
-    const q = new URLSearchParams({ campaign_id: campaignId });
+  listLinks: (tenantId: string, campaignId?: string, cursor?: string) => {
+    const q = new URLSearchParams();
+    if (campaignId) q.set("campaign_id", campaignId);
     if (cursor) q.set("cursor", cursor);
-    return get<ListPage<LinkData>>(`/api/v1/links?${q}`, tenantId);
+    return get<ListPage<LinkData>>(`/api/v1/links${q.toString() ? `?${q}` : ""}`, tenantId);
   },
 
   // Companies

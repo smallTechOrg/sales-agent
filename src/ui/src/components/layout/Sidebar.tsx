@@ -24,6 +24,7 @@ export function Sidebar() {
         { label: "People", href: `/${activeTenantId}/people` },
         { label: "Approvals", href: `/${activeTenantId}/approvals` },
         { label: "Messages", href: `/${activeTenantId}/messages` },
+        { label: "Links", href: `/${activeTenantId}/links` },
         { label: "Events", href: `/${activeTenantId}/events` },
         { label: "Settings", href: `/${activeTenantId}/settings` },
       ]

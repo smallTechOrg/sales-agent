@@ -154,6 +154,10 @@ class LinkRow(Base):
     source: Mapped[str] = mapped_column(String(32), nullable=False)  # web | linkedin | directory
     page_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     page_excerpt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    scrape_status: Mapped[str] = mapped_column(Text, nullable=False, default="pending")  # pending | scraped | failed | blocked
+    page_type: Mapped[str | None] = mapped_column(Text, nullable=True)
+    page_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    page_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
     scraped_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     identified_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False, default=_now)

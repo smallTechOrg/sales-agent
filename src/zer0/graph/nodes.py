@@ -40,6 +40,7 @@ from zer0.tools import (
     send_whatsapp,
     web_search,
 )
+from zer0.tools.scrape_page import is_blocked_domain
 
 log = structlog.get_logger(__name__)
 
@@ -229,26 +230,82 @@ def node_discover(state: AgentState) -> dict:
 # scrape_links  →  fills link.page_text
 # ---------------------------------------------------------------------------
 
+_LINK_ANALYSIS_PROMPT = """\
+You are analysing a scraped web page for a B2B sales pipeline.
+
+Return ONLY a JSON object with exactly these keys:
+- "page_type": one of "company_website" | "directory_listing" | "news_article" | "social_profile" | "job_board" | "blog_post" | "other"
+- "page_summary": one sentence ≤100 chars describing what the page is about
+- "page_detail": 2–3 sentences ≤400 chars with the most commercially relevant detail
+
+Page URL: {url}
+
+Page text (first 3000 chars):
+{text}
+"""
+
+
+def _analyse_link(llm: LLMClient, url: str, text: str) -> tuple[str, str, str]:
+    """Return (page_type, page_summary, page_detail) from LLM analysis."""
+    import json
+    prompt = _LINK_ANALYSIS_PROMPT.format(url=url, text=text[:3000])
+    raw = llm.complete(prompt)
+    try:
+        start = raw.index("{")
+        end = raw.rindex("}") + 1
+        data = json.loads(raw[start:end])
+        return (
+            data.get("page_type", "other"),
+            (data.get("page_summary") or "")[:100],
+            (data.get("page_detail") or "")[:400],
+        )
+    except Exception:
+        return "other", "", ""
+
+
 def node_scrape_links(state: AgentState) -> dict:
-    """Scrape each link and store page_text on the Link and in LinkRow."""
+    """Scrape each link, classify via LLM, and persist all analysis fields."""
     if state.get("error"):
         return {}
 
+    llm = LLMClient()
     updated: list[Link] = []
+
     for lnk in state.get("links", []):
-        if lnk.scraped_at:  # already attempted (success or permanent failure)
+        if lnk.scrape_status == "scraped":
             updated.append(lnk)
             continue
+
         now = _now()
-        try:
-            text = scrape_page(url=lnk.url)
-            excerpt = text[:500] if text else None
-            scraped = lnk.model_copy(update={"page_text": text, "page_excerpt": excerpt, "scraped_at": now})
-            updated.append(scraped)
-        except Exception as exc:
-            log.warning("scrape_links.failed", link_id=lnk.id, url=lnk.url, error=str(exc))
-            text, excerpt = "", None
-            updated.append(lnk.model_copy(update={"scraped_at": now}))
+        updates: dict = {"scraped_at": now}
+
+        if is_blocked_domain(lnk.url):
+            updates["scrape_status"] = "blocked"
+            updated.append(lnk.model_copy(update=updates))
+            log.info("scrape_links.blocked", link_id=lnk.id, url=lnk.url)
+        else:
+            try:
+                text = scrape_page(url=lnk.url)
+                excerpt = text[:500] if text else None
+                updates["page_text"] = text
+                updates["page_excerpt"] = excerpt
+
+                if text:
+                    try:
+                        page_type, page_summary, page_detail = _analyse_link(llm, lnk.url, text)
+                        updates["page_type"] = page_type
+                        updates["page_summary"] = page_summary
+                        updates["page_detail"] = page_detail
+                    except Exception as exc:
+                        log.warning("scrape_links.analysis_failed", link_id=lnk.id, error=str(exc))
+
+                updates["scrape_status"] = "scraped"
+                updated.append(lnk.model_copy(update=updates))
+            except Exception as exc:
+                log.warning("scrape_links.failed", link_id=lnk.id, url=lnk.url, error=str(exc))
+                updates["scrape_status"] = "failed"
+                updated.append(lnk.model_copy(update=updates))
+
         try:
             with create_db_session() as session:
                 row = (
@@ -257,9 +314,8 @@ def node_scrape_links(state: AgentState) -> dict:
                     .first()
                 )
                 if row:
-                    row.page_text = text
-                    row.page_excerpt = excerpt
-                    row.scraped_at = now
+                    for field, val in updates.items():
+                        setattr(row, field, val)
         except Exception as exc:
             log.warning("scrape_links.db_write_failed", link_id=lnk.id, error=str(exc))
 
