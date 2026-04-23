@@ -112,7 +112,8 @@ export interface LeadData {
   tenant_id: string;
   campaign_id: string;
   link_id: string | null;
-  customer_id: string | null;
+  company_id: string | null;
+  source: string | null;
   stage: string;
   company_name: string | null;
   domain: string | null;
@@ -127,6 +128,7 @@ export interface LeadData {
   rejection_reason: string | null;
   detected_language: string | null;
   blocked_at: string | null;
+  last_researched_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -140,12 +142,22 @@ export interface LinkData {
   campaign_id: string;
   url: string;
   source: string;
+  page_excerpt: string | null;
   scraped_at: string | null;
   identified_at: string | null;
   created_at: string;
 }
 
-export interface CustomerData {
+export interface SourceLinkData {
+  id: string;
+  url: string;
+  source: string;
+  campaign_id: string | null;
+  page_excerpt: string | null;
+  scraped_at: string | null;
+}
+
+export interface CompanyData {
   id: string;
   tenant_id: string;
   domain: string;
@@ -158,6 +170,7 @@ export interface CustomerData {
   notes: string | null;
   first_seen_at: string | null;
   last_enriched_at: string | null;
+  source_links: SourceLinkData[];
   created_at: string;
   updated_at: string;
 }
@@ -238,6 +251,11 @@ export interface RunData {
   started_at: string | null;
   finished_at: string | null;
   error: string | null;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  llm_call_count: number;
+  estimated_cost_usd: number;
   created_at: string;
 }
 
@@ -250,11 +268,11 @@ export interface CampaignStats {
   replies_received: number;
 }
 
-export interface ContactData {
+export interface PersonData {
   id: string;
   tenant_id: string;
   lead_id: string;
-  customer_id: string | null;
+  company_id: string | null;
   first_name: string | null;
   last_name: string | null;
   full_name: string | null;
@@ -284,6 +302,8 @@ export const api = {
     get<TenantData[]>("/api/v1/tenants", null),
   createTenant: (name: string) =>
     post<TenantData>("/api/v1/tenants", null, { name }),
+  deleteTenant: (tenantId: string) =>
+    del(`/api/v1/tenants/${tenantId}`, null),
 
   // Tenant (settings on an existing tenant)
   getTenant: (tenantId: string) =>
@@ -364,40 +384,42 @@ export const api = {
     patch<LeadData>(`/api/v1/leads/${id}`, tenantId, body),
 
   // Links
+  getLink: (tenantId: string, linkId: string) =>
+    get<LinkData>(`/api/v1/links/${linkId}`, tenantId),
   listLinks: (tenantId: string, campaignId: string, cursor?: string) => {
     const q = new URLSearchParams({ campaign_id: campaignId });
     if (cursor) q.set("cursor", cursor);
     return get<ListPage<LinkData>>(`/api/v1/links?${q}`, tenantId);
   },
 
-  // Customers
-  listCustomers: (tenantId: string, cursor?: string) =>
-    get<ListPage<CustomerData>>(
-      `/api/v1/customers${cursor ? `?cursor=${cursor}` : ""}`,
+  // Companies
+  listCompanies: (tenantId: string, cursor?: string) =>
+    get<ListPage<CompanyData>>(
+      `/api/v1/companies${cursor ? `?cursor=${cursor}` : ""}`,
       tenantId
     ),
-  getCustomer: (tenantId: string, id: string) =>
-    get<CustomerData>(`/api/v1/customers/${id}`, tenantId),
-  patchCustomer: (tenantId: string, id: string, body: Partial<CustomerData>) =>
-    patch<CustomerData>(`/api/v1/customers/${id}`, tenantId, body),
+  getCompany: (tenantId: string, id: string) =>
+    get<CompanyData>(`/api/v1/companies/${id}`, tenantId),
+  patchCompany: (tenantId: string, id: string, body: Partial<CompanyData>) =>
+    patch<CompanyData>(`/api/v1/companies/${id}`, tenantId, body),
 
-  // Contacts
-  listContacts: (
+  // People
+  listPeople: (
     tenantId: string,
-    params?: { customer_id?: string; cursor?: string }
+    params?: { company_id?: string; cursor?: string }
   ) => {
     const q = new URLSearchParams();
-    if (params?.customer_id) q.set("customer_id", params.customer_id);
+    if (params?.company_id) q.set("company_id", params.company_id);
     if (params?.cursor) q.set("cursor", params.cursor);
-    return get<ListPage<ContactData>>(
-      `/api/v1/contacts${q.toString() ? `?${q}` : ""}`,
+    return get<ListPage<PersonData>>(
+      `/api/v1/people${q.toString() ? `?${q}` : ""}`,
       tenantId
     );
   },
-  getContact: (tenantId: string, id: string) =>
-    get<ContactData>(`/api/v1/contacts/${id}`, tenantId),
-  patchContact: (tenantId: string, id: string, body: { approved_for_outreach?: boolean; outreach_stopped?: boolean }) =>
-    patch<ContactData>(`/api/v1/contacts/${id}`, tenantId, body),
+  getPerson: (tenantId: string, id: string) =>
+    get<PersonData>(`/api/v1/people/${id}`, tenantId),
+  patchPerson: (tenantId: string, id: string, body: { approved_for_outreach?: boolean; outreach_stopped?: boolean }) =>
+    patch<PersonData>(`/api/v1/people/${id}`, tenantId, body),
 
   // Approvals
   listApprovals: (

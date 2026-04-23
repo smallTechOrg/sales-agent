@@ -1,8 +1,8 @@
-"""Customer domain model.
+"""Company domain model.
 
-Spec: spec/product/07-data-model.md — customers table
+Spec: spec/product/07-data-model.md — companies table
 
-A Customer is a tenant-wide persistent record for a company identified
+A Company is a tenant-wide persistent record for a company identified
 across one or more campaigns. Knowledge is cumulative: research_summary
 and signals are appended on each agent run; humans can supplement via
 the notes field.
@@ -16,7 +16,7 @@ from typing import Optional
 from pydantic import BaseModel
 
 
-class Customer(BaseModel):
+class Company(BaseModel):
     id: str
     tenant_id: str
     domain: str

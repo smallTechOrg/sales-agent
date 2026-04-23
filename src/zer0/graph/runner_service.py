@@ -10,6 +10,7 @@ API can report status and current node without polling the agent state directly.
 
 from __future__ import annotations
 
+import contextvars
 import os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -18,6 +19,7 @@ import structlog
 
 from zer0.db.models import CampaignRunRow
 from zer0.db.session import create_db_session
+from zer0.llm import usage_sink
 
 log = structlog.get_logger(__name__)
 
@@ -41,6 +43,21 @@ def _update_run(run_id: str, **kwargs: object) -> None:
         log.warning("runner_service.update_run_failed", run_id=run_id, error=str(exc))
 
 
+def _flush_usage(run_id: str) -> None:
+    """Write accumulated LLM usage from the sink into the campaign_runs row."""
+    usage = usage_sink.clear_usage(run_id)
+    if usage is None:
+        return
+    _update_run(
+        run_id,
+        input_tokens=usage.input_tokens,
+        output_tokens=usage.output_tokens,
+        total_tokens=usage.total_tokens,
+        llm_call_count=usage.llm_call_count,
+        estimated_cost_usd=usage.estimated_cost_usd,
+    )
+
+
 def _run_in_thread(
     *,
     run_id: str,
@@ -48,13 +65,16 @@ def _run_in_thread(
     tenant_id: str,
 ) -> None:
     """Execute the agent graph. Called inside the thread pool."""
+    usage_sink.current_run_id.set(run_id)
     _update_run(run_id, status="running", started_at=_now(), current_node="resolve_config")
     try:
         from zer0.graph.runner import run_campaign
         run_campaign(campaign_id=campaign_id, tenant_id=tenant_id, run_id=run_id)
+        _flush_usage(run_id)
         _update_run(run_id, status="completed", finished_at=_now(), current_node=None)
     except Exception as exc:
         log.error("runner_service.run_failed", run_id=run_id, campaign_id=campaign_id, error=str(exc))
+        _flush_usage(run_id)
         _update_run(run_id, status="failed", finished_at=_now(), error=str(exc), current_node=None)
 
 
@@ -118,7 +138,9 @@ def submit(*, campaign_id: str, tenant_id: str, run_id: str) -> None:
         log.error("runner_service.create_run_row_failed", run_id=run_id, error=str(exc))
         raise
 
+    ctx = contextvars.copy_context()
     _executor.submit(
+        ctx.run,
         _run_in_thread,
         run_id=run_id,
         campaign_id=campaign_id,

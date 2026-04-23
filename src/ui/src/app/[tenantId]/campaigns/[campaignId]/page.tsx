@@ -10,31 +10,39 @@ import { LeadFilterBar, LeadTable } from "@/components/lead/LeadTable";
 import { LinksTable } from "@/components/campaign/LinksTable";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { Spinner } from "@/components/ui/Spinner";
-import { api, type RunData, type EventData } from "@/lib/api";
+import { api, type RunData, type EventData, type LeadData, type LinkData } from "@/lib/api";
 
 type Tab = "pipeline" | "activity" | "runs";
 
-// ── Agent node pipeline (ordered) ──────────────────────────────────────────
-const NODES = [
-  { key: "resolve_config", label: "Config" },
+// ── Agent progress stages shown to operators ───────────────────────────────
+const PROGRESS_NODES = [
   { key: "discover", label: "Discover" },
   { key: "scrape_links", label: "Scrape" },
   { key: "identify_leads", label: "Identify" },
   { key: "research", label: "Research" },
   { key: "qualify", label: "Qualify" },
-  { key: "get_contacts", label: "Contacts" },
-  { key: "approval_gate", label: "Approval" },
-  { key: "outreach", label: "Outreach" },
-  { key: "check_replies", label: "Replies" },
-];
+ ] as const;
+
+const QUALIFY_STAGE_INDEX = PROGRESS_NODES.findIndex((node) => node.key === "qualify");
+
+function getProgressNodeIndex(currentNode: string | null): number {
+  if (!currentNode || currentNode === "resolve_config") {
+    return -1;
+  }
+
+  const visibleIndex = PROGRESS_NODES.findIndex((node) => node.key === currentNode);
+  if (visibleIndex >= 0) {
+    return visibleIndex;
+  }
+
+  return QUALIFY_STAGE_INDEX;
+}
 
 type NodeStatus = "completed" | "active" | "failed" | "pending";
 
 function getNodeStatus(nodeKey: string, run: RunData): NodeStatus {
-  const idx = NODES.findIndex((n) => n.key === nodeKey);
-  const curIdx = run.current_node
-    ? NODES.findIndex((n) => n.key === run.current_node)
-    : -1;
+  const idx = PROGRESS_NODES.findIndex((node) => node.key === nodeKey);
+  const curIdx = getProgressNodeIndex(run.current_node);
 
   if (run.status === "completed") return "completed";
   if (run.status === "failed" || run.status === "interrupted") {
@@ -53,7 +61,7 @@ function getNodeStatus(nodeKey: string, run: RunData): NodeStatus {
 function NodePipeline({ run }: { run: RunData }) {
   return (
     <div className="flex items-center gap-1 flex-wrap py-3">
-      {NODES.map((node, i) => {
+      {PROGRESS_NODES.map((node, i) => {
         const st = getNodeStatus(node.key, run);
         const dot =
           st === "completed" ? "bg-green-500" :
@@ -71,7 +79,7 @@ function NodePipeline({ run }: { run: RunData }) {
               <div className={`w-2.5 h-2.5 rounded-full ${dot}`} />
               <span className={`text-[10px] font-medium ${text}`}>{node.label}</span>
             </div>
-            {i < NODES.length - 1 && (
+            {i < PROGRESS_NODES.length - 1 && (
               <div className={`w-4 h-px mb-3 ${st === "completed" ? "bg-green-700" : "bg-slate-700"}`} />
             )}
           </div>
@@ -117,8 +125,8 @@ function eventLabel(ev: EventData): string {
     "lead.researched": "🔍 Lead researched",
     "lead.qualified": "✅ Lead qualified",
     "lead.rejected": "❌ Lead rejected",
-    "lead.contacts_found": "📇 Contacts found",
-    "contact.discovered": "📇 Contact discovered",
+    "lead.people_found": "📇 People found",
+    "person.discovered": "📇 Person discovered",
     "approval.granted": "✅ Approval granted",
     "approval.pending": "⏳ Approval pending",
     "message.drafted": "✏️ Message drafted",
@@ -129,6 +137,89 @@ function eventLabel(ev: EventData): string {
     "run.error": "💥 Run error",
   };
   return labels[ev.event_type] ?? ev.event_type;
+}
+
+function ActivityEventItem({
+  event,
+  leadMap,
+  linkMap,
+}: {
+  event: EventData;
+  leadMap: Record<string, LeadData>;
+  linkMap: Record<string, LinkData>;
+}) {
+  const payload = event.payload ?? {};
+  const lead = event.lead_id ? leadMap[event.lead_id] : null;
+  const companyName =
+    (typeof payload.company_name === "string" ? payload.company_name : null) ??
+    lead?.company_name ??
+    null;
+  const domain =
+    (typeof payload.domain === "string" ? payload.domain : null) ??
+    lead?.domain ??
+    null;
+  const url = typeof payload.url === "string" ? payload.url : null;
+  const score =
+    payload.score != null ? Number(payload.score) : lead?.score ?? null;
+  const rejectionText = lead?.rejection_reason ?? lead?.rationale ?? "";
+  const showRejectionReason =
+    event.event_type === "lead.rejected" && rejectionText.length > 0;
+  const contactCount = typeof payload.count === "number" ? payload.count : null;
+  const identifiedLinkId = typeof payload.link_id === "string" ? payload.link_id : null;
+
+  const dotColor =
+    event.event_type === "lead.rejected" ? "bg-red-500 border-red-600" :
+    event.event_type === "lead.qualified" ? "bg-green-500 border-green-600" :
+    event.event_type === "lead.identified" ? "bg-indigo-500 border-indigo-600" :
+    event.event_type === "lead.people_found" ? "bg-purple-500 border-purple-600" :
+    event.event_type === "link.discovered" ? "bg-cyan-500 border-cyan-600" :
+    event.event_type.startsWith("message.") ? "bg-yellow-500 border-yellow-600" :
+    "bg-slate-700 border-slate-600";
+
+  return (
+    <div className="relative">
+      <span className={`absolute -left-[1.625rem] top-1 w-2.5 h-2.5 rounded-full border ${dotColor}`} />
+      <div className="text-sm text-white font-medium">{eventLabel(event)}</div>
+
+      {(companyName || domain) && (
+        <div className="text-xs text-slate-300 mt-0.5">
+          {companyName && <span className="font-medium">{companyName}</span>}
+          {companyName && domain && <span className="text-slate-500"> · </span>}
+          {domain && <span className="font-mono text-slate-400">{domain}</span>}
+        </div>
+      )}
+
+      {url && (
+        <div className="text-xs text-slate-500 mt-0.5 truncate max-w-sm">
+          <a href={url} target="_blank" rel="noopener noreferrer" className="hover:text-indigo-400">{url}</a>
+        </div>
+      )}
+
+      {showRejectionReason && (
+        <div className="mt-1 text-xs text-red-300 bg-red-900/20 rounded px-2 py-1">
+          {rejectionText}
+        </div>
+      )}
+
+      {(event.event_type === "lead.qualified" || event.event_type === "lead.rejected") && score != null && (
+        <div className="text-xs text-slate-500 mt-0.5">Score: <span className="text-slate-300">{score}</span></div>
+      )}
+
+      {event.event_type === "lead.people_found" && contactCount != null && (
+        <div className="text-xs text-slate-400 mt-0.5">{contactCount} people found</div>
+      )}
+
+      {event.event_type === "lead.identified" && identifiedLinkId && linkMap[identifiedLinkId] && (
+        <div className="text-xs text-slate-500 mt-0.5 truncate max-w-sm">
+          From: <a href={linkMap[identifiedLinkId].url} target="_blank" rel="noopener noreferrer" className="font-mono hover:text-indigo-400">{linkMap[identifiedLinkId].url}</a>
+        </div>
+      )}
+
+      <div className="text-xs text-slate-600 mt-0.5">
+        {new Date(event.created_at).toLocaleTimeString()}
+      </div>
+    </div>
+  );
 }
 
 // ── Stats bar ──────────────────────────────────────────────────────────────
@@ -161,11 +252,21 @@ export default function CampaignLeadPipelinePage({
   const { runs, loading: runsLoading, error: runsError, refresh: refreshRuns } = useRuns(tenantId, campaignId);
   const activeRun = useRun(tenantId, campaignId, activeRunId);
   const { stats, refresh: refreshStats } = useCampaignStats(tenantId, campaignId, isRunning);
-  const { events, hasMore: eventsHasMore, loading: eventsLoading } = useEvents({ tenantId, campaignId, poll: isRunning });
+  const {
+    events,
+    hasMore: eventsHasMore,
+    loading: eventsLoading,
+    loadingMore: eventsLoadingMore,
+    loadMore: loadMoreEvents,
+  } = useEvents({ tenantId, campaignId, poll: isRunning });
 
   // Index leads and links for activity enrichment
-  const leadMap = Object.fromEntries(leads.map((l) => [l.id, l]));
-  const linkMap = Object.fromEntries(links.map((l) => [l.id, l]));
+  const leadMap: Record<string, LeadData> = Object.fromEntries(
+    leads.map((lead) => [lead.id, lead])
+  );
+  const linkMap: Record<string, LinkData> = Object.fromEntries(
+    links.map((link) => [link.id, link])
+  );
 
   const handleRunNow = async () => {
     setTriggering(true);
@@ -196,9 +297,6 @@ export default function CampaignLeadPipelinePage({
       refreshStats();
     }
   }, [activeRun?.status]);
-
-  // Chronological events for activity feed (API returns newest-first → reverse)
-  const chronoEvents = [...events].reverse();
 
   return (
     <div className="max-w-4xl mx-auto">
@@ -238,6 +336,9 @@ export default function CampaignLeadPipelinePage({
               {" — "}<RunStatusBadge status={activeRun.status} />
             </span>
           </div>
+          <p className="text-xs text-blue-200/80 mb-2">
+            Progress stops at qualification. Approved leads move into operator review after this point.
+          </p>
           <NodePipeline run={activeRun} />
         </div>
       )}
@@ -308,87 +409,39 @@ export default function CampaignLeadPipelinePage({
           )}
           {eventsHasMore && (
             <p className="text-xs text-yellow-500 mb-3">
-              Showing first 200 events. Use the API for full history.
+              Showing the latest {events.length} events. Load older events below.
             </p>
           )}
           {eventsLoading && events.length === 0 ? (
             <div className="flex justify-center py-8"><Spinner /></div>
-          ) : chronoEvents.length === 0 ? (
+          ) : events.length === 0 ? (
             <p className="text-slate-500 text-sm py-8 text-center">
               No activity yet. Trigger a run to see the agent at work.
             </p>
           ) : (
-            <div className="relative border-l border-slate-800 ml-3 pl-6 flex flex-col gap-4">
-              {chronoEvents.map((ev) => {
-                const p = ev.payload ?? {};
-                const lead = ev.lead_id ? leadMap[ev.lead_id] : null;
-                const companyName = (p.company_name as string) ?? lead?.company_name ?? null;
-                const domain = (p.domain as string) ?? lead?.domain ?? null;
-                const url = (p.url as string) ?? null;
-                const score = p.score != null ? Number(p.score) : lead?.score ?? null;
-
-                // Dot colour by event type
-                const dotColor =
-                  ev.event_type === "lead.rejected" ? "bg-red-500 border-red-600" :
-                  ev.event_type === "lead.qualified" ? "bg-green-500 border-green-600" :
-                  ev.event_type === "lead.identified" ? "bg-indigo-500 border-indigo-600" :
-                  ev.event_type === "lead.contacts_found" ? "bg-purple-500 border-purple-600" :
-                  ev.event_type === "link.discovered" ? "bg-cyan-500 border-cyan-600" :
-                  ev.event_type.startsWith("message.") ? "bg-yellow-500 border-yellow-600" :
-                  "bg-slate-700 border-slate-600";
-
-                return (
-                  <div key={ev.id} className="relative">
-                    <span className={`absolute -left-[1.625rem] top-1 w-2.5 h-2.5 rounded-full border ${dotColor}`} />
-                    <div className="text-sm text-white font-medium">{eventLabel(ev)}</div>
-
-                    {/* Entity line: company + domain */}
-                    {(companyName || domain) && (
-                      <div className="text-xs text-slate-300 mt-0.5">
-                        {companyName && <span className="font-medium">{companyName}</span>}
-                        {companyName && domain && <span className="text-slate-500"> · </span>}
-                        {domain && <span className="font-mono text-slate-400">{domain}</span>}
-                      </div>
-                    )}
-
-                    {/* Source URL for link events */}
-                    {url && (
-                      <div className="text-xs text-slate-500 mt-0.5 truncate max-w-sm">
-                        <a href={url} target="_blank" rel="noopener noreferrer" className="hover:text-indigo-400">{url}</a>
-                      </div>
-                    )}
-
-                    {/* Rejection reason */}
-                    {ev.event_type === "lead.rejected" && (lead?.rejection_reason || lead?.rationale) && (
-                      <div className="mt-1 text-xs text-red-300 bg-red-900/20 rounded px-2 py-1">
-                        {lead.rejection_reason ?? lead.rationale}
-                      </div>
-                    )}
-
-                    {/* Score for qualified / rejected */}
-                    {(ev.event_type === "lead.qualified" || ev.event_type === "lead.rejected") && score != null && (
-                      <div className="text-xs text-slate-500 mt-0.5">Score: <span className="text-slate-300">{score}</span></div>
-                    )}
-
-                    {/* Contacts count */}
-                    {ev.event_type === "lead.contacts_found" && p.count != null && (
-                      <div className="text-xs text-slate-400 mt-0.5">{p.count as number} contact{(p.count as number) !== 1 ? "s" : ""} found</div>
-                    )}
-
-                    {/* Source URL the lead was extracted from (lead.identified has link_id) */}
-                    {ev.event_type === "lead.identified" && p.link_id && linkMap[p.link_id as string] && (
-                      <div className="text-xs text-slate-500 mt-0.5 truncate max-w-sm">
-                        From: <a href={linkMap[p.link_id as string].url} target="_blank" rel="noopener noreferrer" className="font-mono hover:text-indigo-400">{linkMap[p.link_id as string].url}</a>
-                      </div>
-                    )}
-
-                    <div className="text-xs text-slate-600 mt-0.5">
-                      {new Date(ev.created_at).toLocaleTimeString()}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+            <>
+              <div className="relative border-l border-slate-800 ml-3 pl-6 flex flex-col gap-4">
+                {events.map((event) => (
+                  <ActivityEventItem
+                    key={event.id}
+                    event={event}
+                    leadMap={leadMap}
+                    linkMap={linkMap}
+                  />
+                ))}
+              </div>
+              {eventsHasMore && (
+                <div className="mt-4 flex justify-center">
+                  <button
+                    onClick={loadMoreEvents}
+                    disabled={eventsLoadingMore}
+                    className="rounded-md border border-slate-700 bg-slate-900 px-4 py-2 text-sm text-slate-200 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {eventsLoadingMore ? "Loading older events…" : "Load older events"}
+                  </button>
+                </div>
+              )}
+            </>
           )}
         </>
       )}
@@ -416,6 +469,13 @@ export default function CampaignLeadPipelinePage({
                     </span>
                   </div>
                   <NodePipeline run={r} />
+                  {(r.total_tokens > 0 || r.llm_call_count > 0) && (
+                    <div className="mt-2 flex items-center gap-4 text-xs text-slate-500">
+                      <span>{r.llm_call_count} LLM calls</span>
+                      <span>{r.total_tokens.toLocaleString()} tokens ({r.input_tokens.toLocaleString()} in / {r.output_tokens.toLocaleString()} out)</span>
+                      <span className="text-emerald-400">${r.estimated_cost_usd.toFixed(6)}</span>
+                    </div>
+                  )}
                   {r.error && (
                     <p className="mt-2 text-xs text-red-400 bg-red-900/20 rounded px-3 py-2">{r.error}</p>
                   )}

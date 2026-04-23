@@ -7,6 +7,7 @@ import { QualificationScores } from "@/components/lead/QualificationScores";
 import { ResearchPanel } from "@/components/lead/ResearchPanel";
 import { LeadMessagesSection } from "@/components/lead/LeadMessagesSection";
 import { LeadEventsSection } from "@/components/lead/LeadEventsSection";
+import { LeadSourceSection } from "@/components/lead/LeadSourceSection";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { Spinner } from "@/components/ui/Spinner";
 
@@ -37,6 +38,7 @@ export default function LeadDetailPage({
   return (
     <div className="max-w-2xl mx-auto space-y-6">
       <LeadProfile lead={lead} />
+      {lead.link_id && <LeadSourceSection tenantId={tenantId} linkId={lead.link_id} />}
       <ResearchPanel lead={lead} />
       <QualificationScores lead={lead} />
       <LeadMessagesSection tenantId={tenantId} leadId={leadId} />

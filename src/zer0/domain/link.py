@@ -24,6 +24,7 @@ class Link(BaseModel):
     url: str
     source: LinkSource
     page_text: str | None = None
+    page_excerpt: str | None = None  # first ≤500 chars of page_text — safe to return in API responses
     scraped_at: datetime | None = None
     identified_at: datetime | None = None
     created_at: datetime | None = None

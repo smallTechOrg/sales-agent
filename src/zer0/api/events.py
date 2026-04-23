@@ -10,12 +10,25 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
-from zer0.api._common import get_current_tenant_id, paginated
+from zer0.api._common import api_error, get_current_tenant_id, paginated
 from zer0.db import EventRow, get_session
 
 router = APIRouter(prefix="/events")
+
+
+def _encode_cursor(row: EventRow) -> str:
+    return f"{row.created_at.isoformat()}|{row.id}"
+
+
+def _decode_cursor(cursor: str) -> tuple[datetime, str]:
+    try:
+        created_at_raw, event_id = cursor.split("|", 1)
+        return datetime.fromisoformat(created_at_raw), event_id
+    except ValueError as exc:
+        raise api_error("INVALID_REQUEST", "Invalid events cursor", 400) from exc
 
 
 class EventOut(BaseModel):
@@ -46,9 +59,15 @@ def list_events(
     if event_type:
         q = q.filter(EventRow.event_type == event_type)
     if cursor:
-        q = q.filter(EventRow.id > cursor)
-    rows = q.order_by(EventRow.created_at.desc()).limit(limit + 1).all()
-    next_cur = rows[-1].id if len(rows) > limit else None
+        cursor_created_at, cursor_id = _decode_cursor(cursor)
+        q = q.filter(
+            or_(
+                EventRow.created_at < cursor_created_at,
+                and_(EventRow.created_at == cursor_created_at, EventRow.id < cursor_id),
+            )
+        )
+    rows = q.order_by(EventRow.created_at.desc(), EventRow.id.desc()).limit(limit + 1).all()
+    next_cur = _encode_cursor(rows[limit - 1]) if len(rows) > limit else None
     items = [
         EventOut(id=r.id, tenant_id=r.tenant_id, campaign_id=r.campaign_id,
                  lead_id=r.lead_id, event_type=r.event_type, payload=r.payload,

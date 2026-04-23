@@ -49,13 +49,13 @@ def after_qualify(state: AgentState) -> str:
     qualified = [l for l in state.get("leads", []) if l.stage == LeadStage.qualification]
     if not qualified:
         return "end"
-    return "get_contacts"
+    return "get_people"
 
 
-def after_get_contacts(state: AgentState) -> str:
+def after_get_people(state: AgentState) -> str:
     if state.get("error"):
         return "handle_error"
-    if not state.get("contacts"):
+    if not state.get("people"):
         return "end"
     return "approval_gate"
 
@@ -63,9 +63,9 @@ def after_get_contacts(state: AgentState) -> str:
 def after_approval_gate(state: AgentState) -> str:
     if state.get("error"):
         return "handle_error"
-    if state.get("pending_approval_contact_ids"):
+    if state.get("pending_approval_person_ids"):
         return "end"
-    if not state.get("approved_contact_ids"):
+    if not state.get("approved_person_ids"):
         return "end"
     return "outreach"
 

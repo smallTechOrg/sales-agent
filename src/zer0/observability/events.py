@@ -45,7 +45,7 @@ def write_event(
     tenant_id: str,
     campaign_id: str | None = None,
     lead_id: str | None = None,
-    contact_id: str | None = None,
+    person_id: str | None = None,
     config_snapshot: ResolvedConfig | None = None,
 ) -> None:
     """Write an event row to the audit log and emit a structured log entry.
@@ -72,7 +72,7 @@ def write_event(
         tenant_id=tenant_id,
         campaign_id=campaign_id,
         lead_id=lead_id,
-        contact_id=contact_id,
+        person_id=person_id,
         event_type=event_type,
         payload=payload or {},
         config_snapshot=config_snapshot.model_dump() if config_snapshot else None,

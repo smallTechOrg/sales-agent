@@ -159,7 +159,7 @@ export function OfferingForm({ value, onChange, errors }: OfferingFormProps) {
       <Field id="icp-desc" label="ICP description (optional)" value={value.icp_description} onChange={set("icp_description")} multiline hint="Plain-language description of the ideal customer. Used as context for the AI." />
 
       {/* ICP */}
-      <SectionHeader title="Ideal Customer Profile (ICP)" subtitle="Defines which companies and contacts the agent will target." />
+      <SectionHeader title="Ideal Customer Profile (ICP)" subtitle="Defines which companies and people the agent will target." />
       <Field id="industries" label="Target industries" value={value.target_industries} onChange={set("target_industries")} hint="Comma-separated. e.g. SaaS, FinTech, Healthcare" placeholder="SaaS, FinTech" />
       <Field id="roles" label="Target roles" value={value.target_roles} onChange={set("target_roles")} hint="Comma-separated. e.g. CEO, VP Sales, CTO" placeholder="CEO, VP Sales" />
       <Field id="keywords" label="Keywords" value={value.keywords} onChange={set("keywords")} hint="Comma-separated discovery keywords." placeholder="enterprise, B2B" />

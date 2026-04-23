@@ -25,7 +25,7 @@ def linkedin_search(
     tenant_id: str,
     campaign_id: str,
 ) -> list[_UrlResult]:
-    """Search LinkedIn for companies and contacts matching the ICP.
+    """Search LinkedIn for companies and people matching the ICP.
 
     TODO: Integrate with LinkedIn API / scraping layer.
     """

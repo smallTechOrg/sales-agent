@@ -65,6 +65,11 @@ class RunOut(BaseModel):
     started_at: datetime | None
     finished_at: datetime | None
     error: str | None
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
+    llm_call_count: int
+    estimated_cost_usd: float
     created_at: datetime
 
 
@@ -83,6 +88,11 @@ def _run_to_out(r: CampaignRunRow) -> RunOut:
         status=r.status, current_node=r.current_node,
         started_at=r.started_at, finished_at=r.finished_at,
         error=r.error, created_at=r.created_at,
+        input_tokens=r.input_tokens or 0,
+        output_tokens=r.output_tokens or 0,
+        total_tokens=r.total_tokens or 0,
+        llm_call_count=r.llm_call_count or 0,
+        estimated_cost_usd=float(r.estimated_cost_usd or 0),
     )
 
 

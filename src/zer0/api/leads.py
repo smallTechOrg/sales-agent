@@ -10,6 +10,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
+from sqlalchemy.orm import joinedload
 
 from zer0.api._common import api_error, get_current_tenant_id, ok, paginated
 from zer0.db import LeadRow, get_session
@@ -22,6 +23,7 @@ class LeadOut(BaseModel):
     tenant_id: str
     campaign_id: str
     link_id: str | None
+    source: str | None
     stage: str
     company_name: str | None
     domain: str | None
@@ -36,6 +38,7 @@ class LeadOut(BaseModel):
     rejection_reason: str | None
     detected_language: str | None
     blocked_at: datetime | None
+    last_researched_at: datetime | None
     created_at: datetime
     updated_at: datetime
 
@@ -53,6 +56,7 @@ def _row_to_out(l: LeadRow) -> LeadOut:
         tenant_id=l.tenant_id,
         campaign_id=l.campaign_id,
         link_id=l.link_id,
+        source=l.link.source if l.link else None,
         stage=l.stage,
         company_name=l.company_name,
         domain=l.domain,
@@ -67,6 +71,7 @@ def _row_to_out(l: LeadRow) -> LeadOut:
         rejection_reason=l.rejection_reason,
         detected_language=l.detected_language,
         blocked_at=l.blocked_at,
+        last_researched_at=l.last_researched_at,
         created_at=l.created_at,
         updated_at=l.updated_at,
     )
@@ -92,7 +97,11 @@ def list_leads(
     tenant_id: str = Depends(get_current_tenant_id),
     session: Session = Depends(get_session),
 ):
-    q = session.query(LeadRow).filter(LeadRow.tenant_id == tenant_id)
+    q = (
+        session.query(LeadRow)
+        .options(joinedload(LeadRow.link))
+        .filter(LeadRow.tenant_id == tenant_id)
+    )
     if campaign_id:
         q = q.filter(LeadRow.campaign_id == campaign_id)
     if stage:
@@ -110,7 +119,15 @@ def get_lead(
     tenant_id: str = Depends(get_current_tenant_id),
     session: Session = Depends(get_session),
 ):
-    return ok(_row_to_out(_get_or_404(lead_id, tenant_id, session)))
+    row = (
+        session.query(LeadRow)
+        .options(joinedload(LeadRow.link))
+        .filter(LeadRow.id == lead_id, LeadRow.tenant_id == tenant_id)
+        .first()
+    )
+    if not row:
+        raise api_error("NOT_FOUND", "Lead not found", 404)
+    return ok(_row_to_out(row))
 
 
 @router.patch("/{lead_id}")

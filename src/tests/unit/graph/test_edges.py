@@ -52,7 +52,7 @@ class TestAfterQualify:
         assert after_qualify({}) == "end"
         assert after_qualify({"leads": []}) == "end"
 
-    def test_with_qualified_leads_routes_to_get_contacts(self) -> None:
+    def test_with_qualified_leads_routes_to_get_people(self) -> None:
         from zer0.domain.lead import Lead, LeadStage
 
         lead = Lead(
@@ -62,22 +62,22 @@ class TestAfterQualify:
             stage=LeadStage.qualification,
             company_name="Acme",
         )
-        assert after_qualify({"leads": [lead]}) == "get_contacts"
+        assert after_qualify({"leads": [lead]}) == "get_people"
 
 
 class TestAfterApprovalGate:
     def test_error_routes_to_handle_error(self) -> None:
         assert after_approval_gate({"error": "fail"}) == "handle_error"
 
-    def test_pending_contacts_pause_run_at_end(self) -> None:
-        assert after_approval_gate({"pending_approval_contact_ids": ["c1"]}) == "end"
+    def test_pending_people_pause_run_at_end(self) -> None:
+        assert after_approval_gate({"pending_approval_person_ids": ["p1"]}) == "end"
 
-    def test_no_approved_contacts_routes_to_end(self) -> None:
+    def test_no_approved_people_routes_to_end(self) -> None:
         assert after_approval_gate({}) == "end"
-        assert after_approval_gate({"approved_contact_ids": []}) == "end"
+        assert after_approval_gate({"approved_person_ids": []}) == "end"
 
-    def test_approved_contacts_route_to_outreach(self) -> None:
-        state = {"approved_contact_ids": ["c1"], "pending_approval_contact_ids": []}
+    def test_approved_people_route_to_outreach(self) -> None:
+        state = {"approved_person_ids": ["p1"], "pending_approval_person_ids": []}
         assert after_approval_gate(state) == "outreach"
 
 

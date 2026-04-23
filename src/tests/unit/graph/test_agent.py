@@ -18,7 +18,7 @@ class TestAgentGraph:
             "identify_leads",
             "research",
             "qualify",
-            "get_contacts",
+            "get_people",
             "approval_gate",
             "outreach",
             "check_replies",

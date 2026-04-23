@@ -17,5 +17,10 @@ export function useTenants() {
       .finally(() => setLoading(false));
   }, []);
 
-  return { tenants, loading, error };
+  async function removeTenant(id: string): Promise<void> {
+    await api.deleteTenant(id);
+    setTenants((prev) => prev.filter((t) => t.id !== id));
+  }
+
+  return { tenants, loading, error, removeTenant };
 }

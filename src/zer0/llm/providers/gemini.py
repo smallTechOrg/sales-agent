@@ -18,6 +18,9 @@ from typing import TYPE_CHECKING, Any
 from google import genai
 from google.genai import types
 
+from zer0.llm import usage_sink
+from zer0.llm.pricing import estimate_cost
+
 if TYPE_CHECKING:
     from zer0.config.settings import Settings
     from zer0.domain.config import ResolvedConfig
@@ -54,6 +57,16 @@ class GeminiProvider:
                 max_output_tokens=self._max_tokens,
             ),
         )
+        meta = getattr(response, "usage_metadata", None)
+        if meta is not None:
+            in_tok = getattr(meta, "prompt_token_count", 0) or 0
+            out_tok = getattr(meta, "candidates_token_count", 0) or 0
+            usage_sink.record(
+                run_id=usage_sink.current_run_id.get(),
+                input_tokens=in_tok,
+                output_tokens=out_tok,
+                cost_usd=estimate_cost(self._model, in_tok, out_tok),
+            )
         return response.text  # type: ignore[return-value]
 
     def load_prompt(

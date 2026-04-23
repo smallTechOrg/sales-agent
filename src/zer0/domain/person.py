@@ -1,6 +1,6 @@
-"""Contact domain model.
+"""Person domain model.
 
-Spec: spec/product/07-data-model.md — contacts table
+Spec: spec/product/07-data-model.md — people table
 """
 
 from __future__ import annotations
@@ -10,11 +10,11 @@ from datetime import datetime
 from pydantic import BaseModel
 
 
-class Contact(BaseModel):
+class Person(BaseModel):
     id: str
     tenant_id: str
     lead_id: str
-    customer_id: str | None = None  # set during get_contacts for cross-campaign dedup
+    company_id: str | None = None  # set during get_people for cross-campaign dedup
     first_name: str | None = None
     last_name: str | None = None
     full_name: str | None = None

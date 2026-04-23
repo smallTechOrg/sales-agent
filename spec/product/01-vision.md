@@ -33,10 +33,10 @@ A value set at Campaign level overrides the Offering default. A value set at Off
 ## The pipeline
 
 ```
-DISCOVER → SCRAPE → IDENTIFY LEADS → RESEARCH → QUALIFY → CONTACTS → APPROVAL → OUTREACH
+DISCOVER → SCRAPE → IDENTIFY LEADS → RESEARCH → QUALIFY → PEOPLE → APPROVAL → OUTREACH
 ```
 
-Every stage is independently configurable per campaign. A **Link** is a raw URL produced by discovery; a **Lead** is a company entity extracted from a link and progressed through the pipeline; a **Contact** is an individual person at that company.
+Every stage is independently configurable per campaign. A **Link** is a raw URL produced by discovery; a **Lead** is a company entity extracted from a link and progressed through the pipeline; a **Person** is an individual at that company.
 
 | Stage              | What happens | What is configurable |
 | ------------------ | ------------ | -------------------- |
@@ -45,9 +45,9 @@ Every stage is independently configurable per campaign. A **Link** is a raw URL 
 | **Identify Leads** | LLM extracts company entities from each page, creating one Lead per identified company. | Extraction prompt, company filters, deduplication rules. |
 | **Research**       | Agent enriches each lead with company context, buying signals, and public data. Cumulative — signals are appended across runs. | Depth of research, which signals to look for, which data sources to use. |
 | **Qualify**        | Agent scores each lead against the ICP rubric. Below-threshold leads are rejected with a reason. | Rubric criteria and weights, score threshold, what counts as a disqualifying signal. |
-| **Contacts**       | Agent finds individual decision-makers at qualified companies. | Target roles, seniority levels, max contacts per lead. |
-| **Approval**       | Operator reviews qualified leads and selects which contacts to reach out to. | Approval mode (auto / qualify gate / message gate / full gate). |
-| **Outreach**       | Agent drafts and sends personalised messages per contact, then follows up until a positive reply is received. Positive reply from one contact stops all other contacts for that lead. | Channels, tone, language, message templates, follow-up count, follow-up spacing, send schedule. |
+| **People**         | Agent finds individual decision-makers at qualified companies. | Target roles, seniority levels, max people per lead. |
+| **Approval**       | Operator reviews qualified leads and selects which people to reach out to. | Approval mode (auto / qualify gate / message gate / full gate). |
+| **Outreach**       | Agent drafts and sends personalised messages per person, then follows up until a positive reply is received. Positive reply from one person stops all other people for that lead. | Channels, tone, language, message templates, follow-up count, follow-up spacing, send schedule. |
 
 ---
 

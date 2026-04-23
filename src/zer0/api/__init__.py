@@ -13,14 +13,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from zer0.api.approvals import router as approvals_router
 from zer0.api.auth import router as auth_router
 from zer0.api.campaigns import router as campaigns_router
-from zer0.api.contacts import router as contacts_router
-from zer0.api.customers import router as customers_router
+from zer0.api.companies import router as companies_router
 from zer0.api.events import router as events_router
 from zer0.api.health import router as health_router
 from zer0.api.leads import router as leads_router
 from zer0.api.links import router as links_router
 from zer0.api.messages import router as messages_router
 from zer0.api.offerings import router as offerings_router
+from zer0.api.people import router as people_router
 from zer0.api.tenant import router as tenant_router
 from zer0.api.tenant import tenants_router
 from zer0.config.settings import get_settings
@@ -61,8 +61,8 @@ def create_app() -> FastAPI:
     app.include_router(approvals_router, prefix=_PREFIX)
     app.include_router(messages_router, prefix=_PREFIX)
     app.include_router(links_router, prefix=_PREFIX)
-    app.include_router(customers_router, prefix=_PREFIX)
-    app.include_router(contacts_router, prefix=_PREFIX)
+    app.include_router(companies_router, prefix=_PREFIX)
+    app.include_router(people_router, prefix=_PREFIX)
     app.include_router(events_router, prefix=_PREFIX)
 
     return app

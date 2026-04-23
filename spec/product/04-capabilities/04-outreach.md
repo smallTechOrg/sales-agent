@@ -4,22 +4,22 @@
 
 ## Purpose
 
-Draft personalised first-touch messages for each approved contact and send them via the configured channels (email and/or WhatsApp).
+Draft personalised first-touch messages for each approved person and send them via the configured channels (email and/or WhatsApp).
 
 ## Trigger
 
-`node_outreach` runs after `node_approval_gate`. For each contact with `approved_for_outreach = true` in `AgentState.contacts`.
+`node_outreach` runs after `node_approval_gate`. For each person with `approved_for_outreach = true` in `AgentState.people`.
 
 ## Behavior
 
-1. For each approved `Contact`:
+1. For each approved `Person`:
    a. Load the parent `Lead` from `AgentState.leads`.
    b. Detect message language via `detect_language(lead)` (LLM, falls back to `"en"`).
    c. For each enabled channel (`email`, `whatsapp`) in `ResolvedConfig.outreach_config`:
-      - Render `outreach.md` prompt with lead data, contact details, and channel-specific constraints.
-      - Call `draft_outreach(lead, contact, config.outreach_config)` (LLM) to produce subject + body.
+    - Render `outreach.md` prompt with lead data, person details, and channel-specific constraints.
+    - Call `draft_outreach(lead, person, config.outreach_config)` (LLM) to produce subject + body.
       - Send via `send_email` or `send_whatsapp`.
-      - Write `MessageRow` with `contact_id`, `status = "sent"`.
+    - Write `MessageRow` with `person_id`, `status = "sent"`.
       - Emit `message_sent` event.
 2. If approval mode is `approve_messages` or `approve_all`, drafts go to `status = "pending_approval"` first and the graph parks until approved via the API.
 
@@ -33,23 +33,23 @@ sequenceDiagram
 
     G->>LLM: detect language
     LLM-->>G: "en"
-    G->>LLM: draft_outreach(lead, contact, email)
+    G->>LLM: draft_outreach(lead, person, email)
     LLM-->>G: subject + body
     G->>Gmail: send_email()
     Gmail-->>G: message_id
-    G->>DB: MessageRow(contact_id=..., status="sent")
-    G->>LLM: draft_outreach(lead, contact, whatsapp)
+    G->>DB: MessageRow(person_id=..., status="sent")
+    G->>LLM: draft_outreach(lead, person, whatsapp)
     LLM-->>G: body
     G->>WA: send_whatsapp()
     WA-->>G: waid
-    G->>DB: MessageRow(contact_id=..., status="sent")
+    G->>DB: MessageRow(person_id=..., status="sent")
 ```
 
 ## Inputs
 
 | Key | Source |
 |---|---|
-| `contacts` (approved_for_outreach=true) | `AgentState.contacts` |
+| `people` (approved_for_outreach=true) | `AgentState.people` |
 | `leads` | `AgentState.leads` |
 | `channels` | `ResolvedConfig.outreach_config.channels` |
 | `google_oauth_token_enc` | `ResolvedConfig` (decrypted) |
@@ -61,17 +61,17 @@ sequenceDiagram
 | Output | Type |
 |---|---|
 | `AgentState.sent_messages` | `list[SentMessage]` |
-| `messages` DB rows | `status = "sent"` or `"failed"`, with `contact_id` set |
+| `messages` DB rows | `status = "sent"` or `"failed"`, with `person_id` set |
 | `events` DB rows | `message_sent` or `message_send_failed` |
 
 ## Failure modes
 
 | Class | Response |
 |---|---|
-| Gmail API error | Log `email_send_failed`, write `MessageRow(status="failed")`, continue to next contact |
+| Gmail API error | Log `email_send_failed`, write `MessageRow(status="failed")`, continue to next person |
 | WhatsApp API 4xx | Log `whatsapp_send_failed`, write `MessageRow(status="failed")`, continue |
 | Approval mode — no approval within TTL | Park state; operator must approve or reject via API |
-| LLM draft parse error | Log `draft_parse_error`, skip channel for this contact |
+| LLM draft parse error | Log `draft_parse_error`, skip channel for this person |
 
 ## Out of scope
 

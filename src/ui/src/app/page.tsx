@@ -6,7 +6,7 @@ import { TenantCard, TenantCardLoading } from "@/components/tenant/TenantCard";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
 
 export default function DashboardPage() {
-  const { tenants, loading, error } = useTenants();
+  const { tenants, loading, error, removeTenant } = useTenants();
 
   return (
     <div className="max-w-3xl mx-auto">
@@ -34,7 +34,7 @@ export default function DashboardPage() {
           </div>
         )}
         {tenants.map((tenant) => (
-          <TenantCard key={tenant.id} tenant={tenant} />
+          <TenantCard key={tenant.id} tenant={tenant} onDelete={removeTenant} />
         ))}
       </div>
     </div>

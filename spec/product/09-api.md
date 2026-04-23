@@ -64,22 +64,22 @@ flowchart LR
     lead_id --> lead_get["GET"]
     lead_id --> lead_patch["PATCH"]
 
-    root --> contacts["/contacts"]
-    contacts --> cont_list["GET  ?lead_id=&customer_id="]
-    contacts --> cont_id["/{id}"]
-    cont_id --> cont_get["GET"]
-    cont_id --> cont_patch["PATCH"]
+    root --> people["/people"]
+    people --> people_list["GET  ?lead_id=&company_id="]
+    people --> people_id["/{id}"]
+    people_id --> people_get["GET"]
+    people_id --> people_patch["PATCH"]
 
     root --> links["/links"]
     links --> link_list["GET  ?campaign_id=&tenant_scope=true"]
     links --> link_id["/{id}"]
     link_id --> link_leads["GET /{id}/leads"]
 
-    root --> customers["/customers"]
-    customers --> cust_list["GET"]
-    customers --> cust_id["/{id}"]
-    cust_id --> cust_get["GET"]
-    cust_id --> cust_patch["PATCH"]
+    root --> companies["/companies"]
+    companies --> company_list["GET"]
+    companies --> company_id["/{id}"]
+    company_id --> company_get["GET"]
+    company_id --> company_patch["PATCH"]
 
     root --> approvals["/approvals"]
     approvals --> appr_list["GET"]
@@ -174,7 +174,7 @@ sequenceDiagram
     participant Op     as Operator
     participant API    as Zer0 API
 
-    Agent  ->> DB     : UPDATE leads SET stage='qualified' (N leads)
+    Agent  ->> DB     : UPDATE leads SET stage='approval' (N leads)
     Agent  ->> DB     : INSERT events (approval.pending × N)
     Agent  ->> Slack  : POST webhook — "N leads pending approval\nin campaign X"
     Agent  ->> DB     : Checkpoint AgentState (graph parks)
@@ -182,9 +182,9 @@ sequenceDiagram
     Note over Agent   : Graph is parked.<br/>No outreach fires until operator acts.
 
     Op     ->> API    : GET /approvals?campaign_id=X&type=qualify
-    API    ->> DB     : SELECT leads WHERE stage='qualified'\nAND approval pending
+    API    ->> DB     : SELECT leads WHERE stage='approval'\nAND approval pending
     DB    -->> API    : Lead list
-    API   -->> Op     : 200 { items: [...qualified leads with scores...] }
+    API   -->> Op     : 200 { items: [...approval-pending leads with scores...] }
 
     loop for each lead
         alt Operator approves
@@ -328,6 +328,14 @@ Update tenant settings. Only the fields you send are changed (partial update).
 
 **Response `200`:** same shape as `GET /tenant`.
 
+### `DELETE /tenants/{id}`
+
+Soft-delete a tenant (sets `deleted_at`). Operator-level — no `X-Tenant-ID` required.
+
+**Response `204`:** No content.
+
+**Errors:** `404 TENANT_NOT_FOUND` if the tenant does not exist or is already deleted.
+
 ---
 
 ## Offerings
@@ -452,6 +460,43 @@ All override fields are optional. `offering_id` is required.
 
 **Response `201`:** created campaign object.
 
+### `GET /campaigns/{id}/runs`
+
+Returns all runs for a campaign, newest first.
+
+**Query params:** `cursor`, `limit`.
+
+**Response `200`:** list of campaign-run objects.
+
+### `GET /campaigns/{id}/runs/{run_id}`
+
+**Response `200`:** single campaign-run object.
+
+**Errors:** `404 NOT_FOUND`.
+
+#### Campaign-run object shape
+
+```json
+{
+  "id": "<uuid>",
+  "tenant_id": "<uuid>",
+  "campaign_id": "<uuid>",
+  "status": "completed",
+  "current_node": "<string | null>",
+  "started_at": "<ISO 8601 | null>",
+  "finished_at": "<ISO 8601 | null>",
+  "error": "<string | null>",
+  "input_tokens": 12400,
+  "output_tokens": 3100,
+  "total_tokens": 15500,
+  "llm_call_count": 8,
+  "estimated_cost_usd": "0.004650",
+  "created_at": "<ISO 8601>"
+}
+```
+
+---
+
 ### `GET /campaigns/{id}`
 
 **Response `200`:** single campaign object including its resolved config.
@@ -542,7 +587,8 @@ Setting `blocked: true` sets `blocked_at` and stops all outreach. `stage` allows
   "tenant_id": "<uuid>",
   "campaign_id": "<uuid>",
   "link_id": "<uuid | null>",
-  "stage": "qualified",
+  "source": "<web | linkedin | directory | null>",
+  "stage": "approval",
   "company_name": "<string | null>",
   "domain": "<string | null>",
   "industry": "<string | null>",
@@ -556,12 +602,13 @@ Setting `blocked: true` sets `blocked_at` and stops all outreach. `stage` allows
   "rejection_reason": null,
   "detected_language": "en",
   "blocked_at": null,
+  "last_researched_at": "<ISO 8601 | null>",
   "created_at": "<ISO 8601>",
   "updated_at": "<ISO 8601>"
 }
 ```
 
-Contact data (email, role, phone) is available via `GET /contacts?lead_id=<id>`.
+Person data (email, role, phone) is available via `GET /people?lead_id=<id>`.
 
 ---
 
@@ -606,7 +653,7 @@ Approve or reject a lead at the qualify gate.
 
 **Request:**
 ```json
-{ "decision": "approve" }
+{ "decision": "approve", "approved_person_ids": ["<uuid>", "<uuid>"] }
 ```
 or
 ```json
@@ -615,7 +662,7 @@ or
 
 **Response `200`:**
 ```json
-{ "data": { "lead_id": "<uuid>", "decision": "approve" }, "error": null }
+{ "data": { "lead_id": "<uuid>", "decision": "approve", "approved_person_ids": ["<uuid>"] }, "error": null }
 ```
 
 **Errors:** `404 NOT_FOUND`, `409 CONFLICT` if decision already made.
@@ -691,38 +738,40 @@ Raw discovery records — every URL found during a campaign run. Use this endpoi
   "campaign_id": "<uuid>",
   "url": "<string>",
   "source": "web",
+  "page_excerpt": "<string | null>",
   "scraped_at": "<ISO 8601 | null>",
   "identified_at": "<ISO 8601 | null>",
   "created_at": "<ISO 8601>"
 }
 ```
 
-`page_text` is **never** returned in API responses — it can be megabytes large. Use the events log to inspect the outcome of the identify step.
+`page_text` is **never** returned in API responses — it can be megabytes large.
+`page_excerpt` is the first ≤500 chars of HTML-stripped page text, safe to return. Use the events log to inspect the outcome of the identify step.
 
 `scraped_at: null` → page has not been fetched yet (or scrape failed).
 `identified_at: null` → link has been scraped but `node_identify_leads` has not yet processed it, or processing failed. Links with `identified_at: null` are eligible for retry.
 
 ---
 
-## Customers
+## Companies
 
 Tenant-wide persistent company knowledge base. One record per `(tenant_id, domain)`. The agent writes here on every identify + research cycle; humans can patch `company_name`, `industry`, and `notes`.
 
-### `GET /customers`
+### `GET /companies`
 
-List all customer records for the tenant.
+List all company records for the tenant.
 
 **Query params:** `cursor`, `limit`.
 
-**Response `200`:** list of customer objects.
+**Response `200`:** list of company objects.
 
-### `GET /customers/{id}`
+### `GET /companies/{id}`
 
-**Response `200`:** single customer object with full research history.
+**Response `200`:** single company object with full research history.
 
 **Errors:** `404 NOT_FOUND`.
 
-### `PATCH /customers/{id}`
+### `PATCH /companies/{id}`
 
 Human-override fields only. The agent never calls this endpoint; it is exclusively for operator correction and annotation.
 
@@ -737,11 +786,11 @@ Human-override fields only. The agent never calls this endpoint; it is exclusive
 }
 ```
 
-**Response `200`:** updated customer object.
+**Response `200`:** updated company object.
 
 **Errors:** `404 NOT_FOUND`, `422 VALIDATION_ERROR`.
 
-#### Customer object shape
+#### Company object shape
 
 ```json
 {

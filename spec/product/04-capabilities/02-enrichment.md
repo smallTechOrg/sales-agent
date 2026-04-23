@@ -58,9 +58,9 @@ Research is **independent web research about the company** — it does not re-us
 **3C — Cumulative write:**
 6. **Append** new summary to `lead.research_summary` (separator `\n\n---\n`). Never overwrite.
 7. **Append** new signals to `lead.signals` (deduplicated). Never overwrite.
-8. **Append** same data to the tenant-wide `CustomerRow.research_summary` and `CustomerRow.signals`.
+8. **Append** same data to the tenant-wide `CompanyRow.research_summary` and `CompanyRow.signals`.
 9. Set `lead.last_researched_at = now()`; set `lead.stage = "research"`.
-10. Persist updated `LeadRow` and `CustomerRow`.
+10. Persist updated `LeadRow` and `CompanyRow`.
 11. Emit `lead.researched` event.
 
 ## Inputs
@@ -99,5 +99,5 @@ Research is **independent web research about the company** — it does not re-us
 
 ## Out of scope
 
-- Verifying contact email deliverability.
-- Sending emails to any extracted contacts — outreach is a separate capability.
+- Verifying person email deliverability.
+- Sending emails to any extracted people — outreach is a separate capability.

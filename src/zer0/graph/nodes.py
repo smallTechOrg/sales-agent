@@ -14,9 +14,9 @@ import structlog
 from datetime import datetime, timezone
 
 from zer0.config.resolver import ConfigResolver
-from zer0.db.models import ContactRow, CustomerRow, LeadRow, LinkLeadsRow, LinkRow, MessageRow
+from zer0.db.models import PersonRow, CompanyRow, LeadRow, LinkLeadsRow, LinkRow, MessageRow
 from zer0.db.session import create_db_session
-from zer0.domain import Contact, Customer, Lead, Link
+from zer0.domain import Person, Company, Lead, Link
 from zer0.domain.config import ApprovalMode, Channel
 from zer0.domain.lead import LeadStage
 from zer0.domain.link import LinkSource as LinkSourceModel
@@ -31,7 +31,7 @@ from zer0.tools import (
     draft_outreach,
     duckduckgo_search,
     enrich_lead,
-    find_all_contacts,
+    find_all_people,
     identify_leads,
     linkedin_search,
     qualify_lead,
@@ -242,7 +242,8 @@ def node_scrape_links(state: AgentState) -> dict:
         try:
             text = scrape_page(url=lnk.url)
             now = _now()
-            scraped = lnk.model_copy(update={"page_text": text, "scraped_at": now})
+            excerpt = text[:500] if text else None
+            scraped = lnk.model_copy(update={"page_text": text, "page_excerpt": excerpt, "scraped_at": now})
             updated.append(scraped)
             try:
                 with create_db_session() as session:
@@ -253,6 +254,7 @@ def node_scrape_links(state: AgentState) -> dict:
                     )
                     if row:
                         row.page_text = text
+                        row.page_excerpt = excerpt
                         row.scraped_at = now
             except Exception as exc:
                 log.warning("scrape_links.db_write_failed", link_id=lnk.id, error=str(exc))
@@ -308,16 +310,16 @@ def node_identify_leads(state: AgentState) -> dict:
                 new_leads.append(lead)
                 try:
                     with create_db_session() as session:
-                        # Upsert CustomerRow for this domain (tenant-wide)
-                        customer_id: str | None = None
+                        # Upsert CompanyRow for this domain (tenant-wide)
+                        company_id: str | None = None
                         if lead.domain:
-                            customer_row = (
-                                session.query(CustomerRow)
-                                .filter(CustomerRow.tenant_id == tenant_id, CustomerRow.domain == lead.domain)
+                            company_row = (
+                                session.query(CompanyRow)
+                                .filter(CompanyRow.tenant_id == tenant_id, CompanyRow.domain == lead.domain)
                                 .first()
                             )
-                            if customer_row is None:
-                                customer_row = CustomerRow(
+                            if company_row is None:
+                                company_row = CompanyRow(
                                     id=_new_id(),
                                     tenant_id=tenant_id,
                                     domain=lead.domain,
@@ -327,26 +329,26 @@ def node_identify_leads(state: AgentState) -> dict:
                                     business_type=lead.business_type,
                                     first_seen_at=_now(),
                                 )
-                                session.add(customer_row)
+                                session.add(company_row)
                             else:
                                 # Fill nulls only — never overwrite existing agent/human data
-                                if customer_row.company_name is None and lead.company_name:
-                                    customer_row.company_name = lead.company_name
-                                if customer_row.industry is None and lead.industry:
-                                    customer_row.industry = lead.industry
-                                if customer_row.headcount_range is None and lead.headcount_range:
-                                    customer_row.headcount_range = lead.headcount_range
-                                if customer_row.business_type is None and lead.business_type:
-                                    customer_row.business_type = lead.business_type
+                                if company_row.company_name is None and lead.company_name:
+                                    company_row.company_name = lead.company_name
+                                if company_row.industry is None and lead.industry:
+                                    company_row.industry = lead.industry
+                                if company_row.headcount_range is None and lead.headcount_range:
+                                    company_row.headcount_range = lead.headcount_range
+                                if company_row.business_type is None and lead.business_type:
+                                    company_row.business_type = lead.business_type
                             session.flush()
-                            customer_id = customer_row.id
+                            company_id = company_row.id
 
                         row = LeadRow(
                             id=lead.id,
                             tenant_id=tenant_id,
                             campaign_id=campaign_id,
                             link_id=lnk.id,
-                            customer_id=customer_id,
+                            company_id=company_id,
                             stage=LeadStage.prospect.value,
                             company_name=lead.company_name,
                             domain=lead.domain,
@@ -371,7 +373,7 @@ def node_identify_leads(state: AgentState) -> dict:
                             tenant_id=tenant_id,
                             campaign_id=campaign_id,
                             lead_id=lead.id,
-                            payload={"company_name": lead.company_name, "link_id": lnk.id, "customer_id": customer_id},
+                            payload={"company_name": lead.company_name, "link_id": lnk.id, "company_id": company_id},
                         )
 
                         # Write link_leads junction row
@@ -400,7 +402,7 @@ def node_research(state: AgentState) -> dict:
 
     Sub-step 3A: web-search the company → scrape result pages.
     Sub-step 3B: call enrich_lead with scraped research_sources.
-    Sub-step 3C: append results to lead + customer (cumulative).
+    Sub-step 3C: append results to lead + company (cumulative).
 
     Spec: spec/product/04-capabilities/02-enrichment.md — Sub-step 3
     """
@@ -478,7 +480,7 @@ def node_research(state: AgentState) -> dict:
             updated = enriched.model_copy(update={"stage": LeadStage.research})
             updated_leads.append(updated)
 
-            # 3C — Cumulative write to lead + customer
+            # 3C — Cumulative write to lead + company
             try:
                 with create_db_session() as session:
                     row = (
@@ -493,24 +495,24 @@ def node_research(state: AgentState) -> dict:
                         row.last_researched_at = updated.last_researched_at
 
                     if lead.domain:
-                        customer_row = (
-                            session.query(CustomerRow)
-                            .filter(CustomerRow.tenant_id == lead.tenant_id, CustomerRow.domain == lead.domain)
+                        company_row = (
+                            session.query(CompanyRow)
+                            .filter(CompanyRow.tenant_id == lead.tenant_id, CompanyRow.domain == lead.domain)
                             .first()
                         )
-                        if customer_row:
+                        if company_row:
                             if updated.research_summary:
-                                if customer_row.research_summary:
-                                    customer_row.research_summary = (
-                                        customer_row.research_summary + "\n\n---\n" + updated.research_summary
+                                if company_row.research_summary:
+                                    company_row.research_summary = (
+                                        company_row.research_summary + "\n\n---\n" + updated.research_summary
                                     )
                                 else:
-                                    customer_row.research_summary = updated.research_summary
+                                    company_row.research_summary = updated.research_summary
                             if updated.signals:
-                                existing = set(customer_row.signals or [])
+                                existing = set(company_row.signals or [])
                                 merged = list(existing | set(updated.signals))
-                                customer_row.signals = merged
-                            customer_row.last_enriched_at = _now()
+                                company_row.signals = merged
+                            company_row.last_enriched_at = _now()
 
                     write_event(
                         db=session,
@@ -591,16 +593,16 @@ def node_qualify(state: AgentState) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# get_contacts
+# get_people
 # ---------------------------------------------------------------------------
 
-def node_get_contacts(state: AgentState) -> dict:
-    """Discover contacts at all qualified leads."""
+def node_get_people(state: AgentState) -> dict:
+    """Discover people at all qualified leads."""
     if state.get("error"):
         return {}
 
     config = state["config"]
-    new_contacts: list[Contact] = []
+    new_people: list[Person] = []
     updated_leads: list[Lead] = []
 
     for lead in state.get("leads", []):
@@ -608,72 +610,72 @@ def node_get_contacts(state: AgentState) -> dict:
             updated_leads.append(lead)
             continue
         try:
-            contacts = find_all_contacts(
+            people = find_all_people(
                 lead=lead,
                 target_roles=config.icp.target_roles,
                 config=config,
             )
-            for contact in contacts:
-                # Deduplicate: if same (customer_id, email) exists, skip insert
-                customer_id_for_lead = None
-                if lead.customer_id:
-                    customer_id_for_lead = lead.customer_id
-                    # Check if this contact already exists for this customer
+            for person in people:
+                # Deduplicate: if same (company_id, email) exists, skip insert
+                company_id_for_lead = None
+                if lead.company_id:
+                    company_id_for_lead = lead.company_id
+                    # Check if this person already exists for this company
                     try:
                         with create_db_session() as dup_check:
                             existing = (
-                                dup_check.query(ContactRow)
+                                dup_check.query(PersonRow)
                                 .filter(
-                                    ContactRow.customer_id == customer_id_for_lead,
-                                    ContactRow.email == contact.email,
+                                    PersonRow.company_id == company_id_for_lead,
+                                    PersonRow.email == person.email,
                                 )
                                 .first()
                             )
                             if existing:
                                 log.info(
-                                    "get_contacts.cross_campaign_dedup",
-                                    contact_id=existing.id,
-                                    customer_id=customer_id_for_lead,
+                                    "get_people.cross_campaign_dedup",
+                                    person_id=existing.id,
+                                    company_id=company_id_for_lead,
                                 )
-                                new_contacts.append(contact.model_copy(update={
+                                new_people.append(person.model_copy(update={
                                     "id": existing.id,
-                                    "customer_id": customer_id_for_lead,
+                                    "company_id": company_id_for_lead,
                                 }))
                                 continue
                     except Exception as exc:
-                        log.warning("get_contacts.dedup_check_failed", error=str(exc))
+                        log.warning("get_people.dedup_check_failed", error=str(exc))
 
-                contact_with_customer = contact.model_copy(update={"customer_id": customer_id_for_lead})
-                new_contacts.append(contact_with_customer)
+                person_with_company = person.model_copy(update={"company_id": company_id_for_lead})
+                new_people.append(person_with_company)
                 try:
                     with create_db_session() as session:
-                        row = ContactRow(
-                            id=contact.id,
+                        row = PersonRow(
+                            id=person.id,
                             tenant_id=lead.tenant_id,
                             lead_id=lead.id,
-                            customer_id=customer_id_for_lead,
-                            first_name=contact.first_name,
-                            last_name=contact.last_name,
-                            full_name=contact.full_name,
-                            email=contact.email,
-                            phone=contact.phone,
-                            role=contact.role,
-                            linkedin_url=contact.linkedin_url,
+                            company_id=company_id_for_lead,
+                            first_name=person.first_name,
+                            last_name=person.last_name,
+                            full_name=person.full_name,
+                            email=person.email,
+                            phone=person.phone,
+                            role=person.role,
+                            linkedin_url=person.linkedin_url,
                         )
                         session.add(row)
                         write_event(
                             db=session,
-                            event_type="contact.discovered",
+                            event_type="person.discovered",
                             tenant_id=lead.tenant_id,
                             campaign_id=lead.campaign_id or state["campaign_id"],
                             lead_id=lead.id,
-                            contact_id=contact.id,
-                            payload={"role": contact.role},
+                            person_id=person.id,
+                            payload={"role": person.role},
                         )
                 except Exception as exc:
-                    log.warning("get_contacts.db_write_failed", contact_id=contact.id, error=str(exc))
+                    log.warning("get_people.db_write_failed", person_id=person.id, error=str(exc))
 
-            updated_lead = lead.model_copy(update={"stage": LeadStage.contacts})
+            updated_lead = lead.model_copy(update={"stage": LeadStage.people})
             updated_leads.append(updated_lead)
 
             try:
@@ -684,60 +686,60 @@ def node_get_contacts(state: AgentState) -> dict:
                         .first()
                     )
                     if row:
-                        row.stage = LeadStage.contacts.value
+                        row.stage = LeadStage.people.value
                     write_event(
                         db=session,
-                        event_type="lead.contacts_found",
+                        event_type="lead.people_found",
                         tenant_id=lead.tenant_id,
                         campaign_id=lead.campaign_id,
                         lead_id=lead.id,
-                        payload={"count": len(contacts)},
+                        payload={"count": len(people)},
                     )
             except Exception as exc:
-                log.warning("get_contacts.lead_stage_failed", lead_id=lead.id, error=str(exc))
+                log.warning("get_people.lead_stage_failed", lead_id=lead.id, error=str(exc))
 
         except Exception as exc:
-            log.warning("get_contacts.lead_failed", lead_id=lead.id, error=str(exc))
+            log.warning("get_people.lead_failed", lead_id=lead.id, error=str(exc))
             updated_leads.append(lead)
 
     return {
         "leads": updated_leads,
-        "contacts": list(state.get("contacts", [])) + new_contacts,
+        "people": list(state.get("people", [])) + new_people,
     }
 
 
 # ---------------------------------------------------------------------------
-# approval_gate  →  approves contacts for outreach
+# approval_gate  →  approves people for outreach
 # ---------------------------------------------------------------------------
 
 def node_approval_gate(state: AgentState) -> dict:
-    """Route contacts to outreach or park for human approval.
+    """Route people to outreach or park for human approval.
 
-    Auto modes: contact.approved_for_outreach = True immediately.
+    Auto modes: person.approved_for_outreach = True immediately.
     Human modes: park and notify via Slack.
     """
     if state.get("error"):
         return {}
 
     config = state["config"]
-    leads_with_contacts_stage = [l for l in state.get("leads", []) if l.stage == LeadStage.contacts]
-    lead_ids = {l.id for l in leads_with_contacts_stage}
-    contacts = [c for c in state.get("contacts", []) if c.lead_id in lead_ids]
+    leads_with_people_stage = [l for l in state.get("leads", []) if l.stage == LeadStage.people]
+    lead_ids = {l.id for l in leads_with_people_stage}
+    people = [p for p in state.get("people", []) if p.lead_id in lead_ids]
     tenant_id = state["tenant_id"]
     campaign_id = state["campaign_id"]
 
     auto_modes = {ApprovalMode.full_auto, ApprovalMode.approve_messages}
-    contact_ids = [c.id for c in contacts]
+    person_ids = [p.id for p in people]
 
     if config.approval_mode in auto_modes:
-        approved_contacts: list[Contact] = []
-        if contact_ids:
+        approved_people: list[Person] = []
+        if person_ids:
             try:
                 with create_db_session() as session:
-                    for contact in contacts:
+                    for person in people:
                         row = (
-                            session.query(ContactRow)
-                            .filter(ContactRow.id == contact.id, ContactRow.lead_id == contact.lead_id)
+                            session.query(PersonRow)
+                            .filter(PersonRow.id == person.id, PersonRow.lead_id == person.lead_id)
                             .first()
                         )
                         if row:
@@ -747,49 +749,57 @@ def node_approval_gate(state: AgentState) -> dict:
                             event_type="approval.granted",
                             tenant_id=tenant_id,
                             campaign_id=campaign_id,
-                            lead_id=contact.lead_id,
-                            contact_id=contact.id,
+                            lead_id=person.lead_id,
+                            person_id=person.id,
                             payload={"auto": True},
                         )
-                    # Update lead stage to approval
-                    for lead in leads_with_contacts_stage:
+                    # Auto-approved leads proceed directly to outreach.
+                    for lead in leads_with_people_stage:
                         lead_row = (
                             session.query(LeadRow)
                             .filter(LeadRow.id == lead.id, LeadRow.tenant_id == tenant_id)
                             .first()
                         )
                         if lead_row:
-                            lead_row.stage = LeadStage.approval.value
+                            lead_row.stage = LeadStage.outreach.value
             except Exception as exc:
                 log.warning("approval_gate.auto_approve_failed", error=str(exc))
-            approved_contacts = [c.model_copy(update={"approved_for_outreach": True}) for c in contacts]
+            approved_people = [p.model_copy(update={"approved_for_outreach": True}) for p in people]
 
         updated_leads = [
-            l.model_copy(update={"stage": LeadStage.approval}) if l.id in lead_ids else l
+            l.model_copy(update={"stage": LeadStage.outreach}) if l.id in lead_ids else l
             for l in state.get("leads", [])
         ]
-        all_contacts = [
-            c.model_copy(update={"approved_for_outreach": True}) if c.id in {ac.id for ac in approved_contacts} else c
-            for c in state.get("contacts", [])
+        all_people = [
+            p.model_copy(update={"approved_for_outreach": True}) if p.id in {ap.id for ap in approved_people} else p
+            for p in state.get("people", [])
         ]
         return {
             "leads": updated_leads,
-            "contacts": all_contacts,
-            "approved_contact_ids": contact_ids,
+            "people": all_people,
+            "approved_person_ids": person_ids,
         }
 
     # Human approval required
-    if contact_ids:
+    if person_ids:
         try:
             with create_db_session() as session:
-                for contact in contacts:
+                for lead in leads_with_people_stage:
+                    lead_row = (
+                        session.query(LeadRow)
+                        .filter(LeadRow.id == lead.id, LeadRow.tenant_id == tenant_id)
+                        .first()
+                    )
+                    if lead_row:
+                        lead_row.stage = LeadStage.approval.value
+                for person in people:
                     write_event(
                         db=session,
                         event_type="approval.pending",
                         tenant_id=tenant_id,
                         campaign_id=campaign_id,
-                        lead_id=contact.lead_id,
-                        contact_id=contact.id,
+                        lead_id=person.lead_id,
+                        person_id=person.id,
                         payload={},
                     )
         except Exception as exc:
@@ -800,37 +810,45 @@ def node_approval_gate(state: AgentState) -> dict:
                 webhook_url=config.slack_webhook_url,
                 event_type="approval.pending",
                 tenant_id=tenant_id,
-                payload={"pending_count": len(contact_ids), "campaign_id": campaign_id},
+                payload={"pending_count": len(person_ids), "campaign_id": campaign_id},
             )
 
-    return {"pending_approval_contact_ids": contact_ids, "approved_contact_ids": []}
+    updated_leads = [
+        l.model_copy(update={"stage": LeadStage.approval}) if l.id in lead_ids else l
+        for l in state.get("leads", [])
+    ]
+    return {
+        "leads": updated_leads,
+        "pending_approval_person_ids": person_ids,
+        "approved_person_ids": [],
+    }
 
 
 # ---------------------------------------------------------------------------
-# outreach  →  draft and send per approved contact
+# outreach  →  draft and send per approved person
 # ---------------------------------------------------------------------------
 
 def node_outreach(state: AgentState) -> dict:
-    """Draft and (optionally) send first-touch messages for each approved contact."""
+    """Draft and (optionally) send first-touch messages for each approved person."""
     if state.get("error"):
         return {}
 
     config = state["config"]
     llm = LLMClient()
-    approved_ids = set(state.get("approved_contact_ids", []))
+    approved_ids = set(state.get("approved_person_ids", []))
     leads_map = {l.id: l for l in state.get("leads", [])}
-    contacts_map = {c.id: c for c in state.get("contacts", [])}
+    people_map = {p.id: p for p in state.get("people", [])}
 
     drafts = []
     sent = []
     approval_required = config.approval_mode in {ApprovalMode.approve_messages, ApprovalMode.approve_all}
     channels = config.outreach_config.channels_enabled
 
-    for contact_id in approved_ids:
-        contact = contacts_map.get(contact_id)
-        if not contact:
+    for person_id in approved_ids:
+        person = people_map.get(person_id)
+        if not person:
             continue
-        lead = leads_map.get(contact.lead_id)
+        lead = leads_map.get(person.lead_id)
         if not lead:
             continue
 
@@ -842,7 +860,7 @@ def node_outreach(state: AgentState) -> dict:
 
                 msg_draft = draft_outreach(
                     lead=lead,
-                    contact=contact,
+                    person=person,
                     channel=channel,
                     sequence_number=1,
                     llm=llm,
@@ -864,7 +882,7 @@ def node_outreach(state: AgentState) -> dict:
                         tenant_id=lead.tenant_id,
                         campaign_id=lead.campaign_id,
                         lead_id=lead.id,
-                        contact_id=contact.id,
+                        person_id=person.id,
                         channel=channel.value,
                         subject=msg_draft.subject,
                         body=msg_draft.body,
@@ -882,7 +900,7 @@ def node_outreach(state: AgentState) -> dict:
                         tenant_id=lead.tenant_id,
                         campaign_id=lead.campaign_id,
                         lead_id=lead.id,
-                        contact_id=contact.id,
+                        person_id=person.id,
                         payload={"channel": channel.value, "sequence": 1, "message_id": msg_row.id},
                     )
 
@@ -893,12 +911,12 @@ def node_outreach(state: AgentState) -> dict:
                             tenant_id=lead.tenant_id,
                             campaign_id=lead.campaign_id,
                             lead_id=lead.id,
-                            contact_id=contact.id,
+                            person_id=person.id,
                             payload={"message_id": msg_row.id},
                         )
                         continue
 
-                    sm = _send_message(msg_draft=msg_draft, config=config, lead=lead, contact=contact)
+                    sm = _send_message(msg_draft=msg_draft, config=config, lead=lead, person=person)
                     sent.append(sm)
 
                     msg_row.status = "sent"
@@ -913,14 +931,14 @@ def node_outreach(state: AgentState) -> dict:
                         tenant_id=lead.tenant_id,
                         campaign_id=lead.campaign_id,
                         lead_id=lead.id,
-                        contact_id=contact.id,
+                        person_id=person.id,
                         payload={"channel": channel.value, "sequence": 1},
                     )
 
             except Exception as exc:
                 log.warning(
-                    "outreach.contact_failed",
-                    contact_id=contact_id,
+                    "outreach.person_failed",
+                    person_id=person_id,
                     channel=channel.value if hasattr(channel, "value") else str(channel),
                     error=str(exc),
                 )
@@ -939,7 +957,7 @@ def node_outreach(state: AgentState) -> dict:
     }
 
 
-def _send_message(*, msg_draft, config, lead, contact) -> SentMessage:
+def _send_message(*, msg_draft, config, lead, person) -> SentMessage:
     """Call the appropriate send tool and return a SentMessage."""
     from zer0.config.settings import get_settings
 
@@ -957,7 +975,7 @@ def _send_message(*, msg_draft, config, lead, contact) -> SentMessage:
     else:
         return send_whatsapp(
             draft=msg_draft,
-            recipient_phone=contact.phone or "",
+            recipient_phone=person.phone or "",
             encrypted_credentials=(
                 config.whatsapp_api_key_enc.encode() if config.whatsapp_api_key_enc else b""
             ),
@@ -966,13 +984,13 @@ def _send_message(*, msg_draft, config, lead, contact) -> SentMessage:
 
 
 # ---------------------------------------------------------------------------
-# check_replies  →  handles positive replies, stops sibling contacts, sends follow-ups
+# check_replies  →  handles positive replies, stops sibling people, sends follow-ups
 # ---------------------------------------------------------------------------
 
 def node_check_replies(state: AgentState) -> dict:
     """Check replies and send follow-ups for active leads.
 
-    Positive reply from contact A → stop outreach to all sibling contacts,
+    Positive reply from person A → stop outreach to all sibling people,
     set lead.stage = first_contact.
     All follow-ups exhausted with no reply → lead.stage = no_contact.
     """
@@ -1012,8 +1030,8 @@ def node_check_replies(state: AgentState) -> dict:
             completed.append(lid)
             try:
                 with create_db_session() as session:
-                    # Stop all sibling contacts for this lead
-                    session.query(ContactRow).filter(ContactRow.lead_id == lid).update(
+                    # Stop all sibling people for this lead
+                    session.query(PersonRow).filter(PersonRow.lead_id == lid).update(
                         {"outreach_stopped": True}
                     )
                     lead_row = (
@@ -1049,23 +1067,23 @@ def node_check_replies(state: AgentState) -> dict:
     completed_set = set(completed)
     llm = LLMClient()
     leads_map = {l.id: l for l in state.get("leads", [])}
-    contacts_map = {c.id: c for c in state.get("contacts", [])}
+    people_map = {p.id: p for p in state.get("people", [])}
     max_follow_ups = config.outreach_config.follow_up_count
 
-    last_sent_by_contact: dict[str, SentMessage] = {}
+    last_sent_by_person: dict[str, SentMessage] = {}
     for m in state.get("sent_messages", []):
-        cid = getattr(m, "contact_id", None)
-        if cid and (
-            cid not in last_sent_by_contact
-            or m.sequence_number > last_sent_by_contact[cid].sequence_number
+        person_id = getattr(m, "person_id", None)
+        if person_id and (
+            person_id not in last_sent_by_person
+            or m.sequence_number > last_sent_by_person[person_id].sequence_number
         ):
-            last_sent_by_contact[cid] = m
+            last_sent_by_person[person_id] = m
 
-    for contact_id, last_msg in last_sent_by_contact.items():
-        contact = contacts_map.get(contact_id)
-        if not contact or contact.outreach_stopped:
+    for person_id, last_msg in last_sent_by_person.items():
+        person = people_map.get(person_id)
+        if not person or person.outreach_stopped:
             continue
-        lead_id = contact.lead_id
+        lead_id = person.lead_id
         if lead_id in completed_set:
             continue
         if last_msg.sent_at is None:
@@ -1107,13 +1125,13 @@ def node_check_replies(state: AgentState) -> dict:
             try:
                 fu_draft = draft_outreach(
                     lead=lead,
-                    contact=contact,
+                    person=person,
                     channel=channel,
                     sequence_number=next_seq,
                     llm=llm,
                     config=config,
                 )
-                sm = _send_message(msg_draft=fu_draft, config=config, lead=lead, contact=contact)
+                sm = _send_message(msg_draft=fu_draft, config=config, lead=lead, person=person)
                 new_sent.append(sm)
 
                 with create_db_session() as session:
@@ -1121,7 +1139,7 @@ def node_check_replies(state: AgentState) -> dict:
                         tenant_id=tenant_id,
                         campaign_id=campaign_id,
                         lead_id=lead.id,
-                        contact_id=contact.id,
+                        person_id=person.id,
                         channel=channel.value,
                         body=fu_draft.body,
                         subject=fu_draft.subject,
@@ -1139,13 +1157,13 @@ def node_check_replies(state: AgentState) -> dict:
                         tenant_id=tenant_id,
                         campaign_id=campaign_id,
                         lead_id=lead.id,
-                        contact_id=contact.id,
+                        person_id=person.id,
                         payload={"channel": channel.value, "sequence": next_seq},
                     )
             except Exception as exc:
                 log.warning(
                     "check_replies.send_failed",
-                    contact_id=contact_id,
+                    person_id=person_id,
                     channel=channel.value if hasattr(channel, "value") else str(channel),
                     error=str(exc),
                 )

@@ -30,12 +30,12 @@ class AgentState(TypedDict):
     # --- Lead pipeline ---
     leads: list[Lead]                    # Company entities extracted from links. Stage field tracks progress.
 
-    # --- Contact pipeline ---
-    contacts: list[Contact]              # People within qualified companies.
+    # --- People pipeline ---
+    people: list[Person]                 # People within qualified companies.
 
     # --- Approval gate ---
-    pending_approval_lead_ids: list[str] # Leads whose contacts are waiting for human approval.
-    approved_contact_ids: list[str]      # Contact IDs approved for outreach.
+    pending_approval_lead_ids: list[str] # Leads whose people are waiting for human approval.
+    approved_person_ids: list[str]       # Person IDs approved for outreach.
 
     # --- Outreach ---
     outreach_drafts: list[OutreachDraft]
@@ -119,33 +119,33 @@ The returned dict is merged into state. Nodes must not mutate the state dict in-
 - Writes `lead.qualified` or `lead.rejected` event per lead.
 - Returns `{"leads": [...]}` with stage-updated leads.
 
-### `get_contacts`
+### `get_people`
 
 - Iterates `state.leads` where `lead.stage == 'qualification'`.
-- For each lead: calls `find_all_contacts(lead, config.icp.target_roles)` → list of `Contact` objects.
-- Persists new `Contact` rows for each result. Does not overwrite existing contacts.
-- Sets `lead.stage = 'contacts'`.
-- Writes `contacts.found` events.
-- Returns `{"leads": [...], "contacts": [...]}` with leads stage-updated and contacts added.
+- For each lead: calls `find_all_people(lead, config.icp.target_roles)` → list of `Person` objects.
+- Persists new `Person` rows for each result. Does not overwrite existing people.
+- Sets `lead.stage = 'people'`.
+- Writes `lead.people_found` and `person.discovered` events.
+- Returns `{"leads": [...], "people": [...]}` with leads stage-updated and people added.
 
 ### `approval_gate`
 
 - Checks `config.approval_mode`.
 - If `full_auto` or `approve_messages`:
-  - Sets `approved_contact_ids = [c.id for c in state.contacts]`.
-  - Sets `contact.approved_for_outreach = True` for all contacts.
+    - Sets `approved_person_ids = [p.id for p in state.people]`.
+    - Sets `person.approved_for_outreach = True` for all people.
   - Sets `lead.stage = 'outreach'` for all leads in state.
 - If `approve_qualify` or `approve_all`:
   - For each lead, persists a `status = pending_approval` record and posts `approval.pending` event and Slack notification.
   - Returns `{"pending_approval_lead_ids": [...]}`.
-  - The graph then **parks** (returns to the caller). A subsequent API call to `POST /approvals/leads/{id}/qualify` resumes the graph by updating `approved_contact_ids` and re-invoking.
+    - The graph then **parks** (returns to the caller). A subsequent API call to `POST /approvals/leads/{id}/qualify` resumes the graph by updating `approved_person_ids` and re-invoking.
 
 ### `outreach`
 
-- Iterates `state.approved_contact_ids`, loading each `Contact` and its parent `Lead`.
-- For each contact:
+- Iterates `state.approved_person_ids`, loading each `Person` and its parent `Lead`.
+- For each person:
   - Calls `detect_language(lead)` to determine outreach language.
-  - Calls `draft_outreach(lead, contact, config.outreach_config)` → `OutreachDraft`.
+    - Calls `draft_outreach(lead, person, config.outreach_config)` → `OutreachDraft`.
   - If `approval_mode` is `approve_messages` or `approve_all`:
     - Creates `messages` row with `status = pending_approval`.
     - Posts `approval.pending` event and Slack notification.
@@ -157,14 +157,14 @@ The returned dict is merged into state. Nodes must not mutate the state dict in-
 ### `check_replies`
 
 - Runs after `outreach`. Polls for replies via `check_replies` tool.
-- For contacts with a positive reply:
+- For people with a positive reply:
   - Writes `reply.received`, `first_contact.triggered` events.
   - Posts Slack alert.
   - Sets `lead.stage = 'first_contact'` for the parent lead.
-  - Sets `outreach_stopped = True` on all other `Contact` rows for the same lead.
+    - Sets `outreach_stopped = True` on all other `Person` rows for the same lead.
   - Adds lead ID to `completed_lead_ids`.
-- For contacts with no reply and remaining follow-ups still available: checks `follow_up_spacing_days` against `last sent_at`; sends next follow-up if due.
-- For leads where all contacts are exhausted (no positive reply, max follow-ups reached): sets `lead.stage = 'no_contact'`; adds lead ID to `completed_lead_ids`.
+- For people with no reply and remaining follow-ups still available: checks `follow_up_spacing_days` against `last sent_at`; sends next follow-up if due.
+- For leads where all people are exhausted (no positive reply, max follow-ups reached): sets `lead.stage = 'no_contact'`; adds lead ID to `completed_lead_ids`.
 - Returns `{"replies": [...], "sent_messages": [...], "completed_lead_ids": [...]}`.
 
 ### `handle_error`
@@ -192,12 +192,12 @@ flowchart TD
     RS["research ×N\nenrich_lead\nappend signals + summary\n[parallel]"]
     FI1{{"fan_in\nmerge updated Leads"}}
     QL["qualify\nqualify_lead per Lead\nscore vs rubric"]
-    GC["get_contacts\nfind_all_contacts per qualified Lead\n→ [Contact]"]
-    AG["approval_gate\ncheck approval_mode\nset approved_contact_ids"]
-    PARK1(["⏸ PARK\noperator reviews\nlead + contact list"])
-    OA["outreach\ndetect_language\ndraft_outreach per Contact\nsend message"]
+    GC["get_people\nfind_all_people per qualified Lead\n→ [Person]"]
+    AG["approval_gate\ncheck approval_mode\nset approved_person_ids"]
+    PARK1(["⏸ PARK\noperator reviews\nlead + people list"])
+    OA["outreach\ndetect_language\ndraft_outreach per Person\nsend message"]
     PARK2(["⏸ PARK\noperator reviews\neach draft"])
-    CR["check_replies\npoll replies\nstop sibling contacts on positive\nfirst_contact | no_contact"]
+    CR["check_replies\npoll replies\nstop sibling people on positive\nfirst_contact | no_contact"]
     END_N(["⏹ END"])
 
     START  --> RC
@@ -254,7 +254,7 @@ flowchart LR
 
 Each `research` sub-graph is an independent LangGraph `Send` invocation. They share no mutable state — each returns a partial dict that LangGraph merges via list-append reducers declared on `AgentState`.
 
-Qualification, contact discovery, and outreach are similarly per-lead but implemented as sequential passes over `state.leads` (not parallel fan-out) — the volume is low enough that parallelism is not required in v1.
+Qualification, people discovery, and outreach are similarly per-lead but implemented as sequential passes over `state.leads` (not parallel fan-out) — the volume is low enough that parallelism is not required in v1.
 
 ---
 
@@ -338,23 +338,23 @@ sequenceDiagram
     end
 
     rect rgb(255, 240, 230)
-        Note over Graph,Ext: CONTACTS
+        Note over Graph,Ext: PEOPLE
         par per qualified lead
-            Graph ->> Tools : find_all_contacts(lead, target_roles)
+            Graph ->> Tools : find_all_people(lead, target_roles)
             Tools ->> Ext   : LinkedIn / Apollo / web search
-            Ext  -->> Tools : [Contact ×K]
-            Graph ->> DB    : INSERT contacts ×K
-            Graph ->> DB    : UPDATE leads SET stage='contacts'
+            Ext  -->> Tools : [Person ×K]
+            Graph ->> DB    : INSERT people ×K
+            Graph ->> DB    : UPDATE leads SET stage='people'
         end
-        Graph  ->> DB : write contacts.found events
+        Graph  ->> DB : write lead.people_found and person.discovered events
         Graph  ->> DB : checkpoint
     end
 
     rect rgb(245, 230, 255)
-        Note over Graph,Slack: OUTREACH (per approved contact)
+        Note over Graph,Slack: OUTREACH (per approved person)
         Graph  ->> Tools : detect_language(lead)
-        par per approved contact
-            Graph  ->> Tools : draft_outreach(lead, contact, outreach_config)
+        par per approved person
+            Graph  ->> Tools : draft_outreach(lead, person, outreach_config)
             Tools  ->> LLM   : generate personalised message
             LLM   -->> Tools : OutreachDraft
             Graph  ->> Tools : send_email / send_whatsapp
@@ -375,8 +375,8 @@ sequenceDiagram
             Ext   -->> Tools : [Reply]
             Tools  ->> LLM   : classify sentiment
             LLM   -->> Tools : positive | neutral | negative
-            alt positive reply from any contact
-                Graph  ->> DB    : UPDATE contacts SET outreach_stopped=true (siblings)
+            alt positive reply from any person
+                Graph  ->> DB    : UPDATE people SET outreach_stopped=true (siblings)
                 Graph  ->> DB    : UPDATE leads SET stage='first_contact'
                 Graph  ->> DB    : write reply.received, first_contact.triggered events
                 Graph  ->> Slack : first_contact notification

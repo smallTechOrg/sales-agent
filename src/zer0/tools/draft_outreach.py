@@ -7,7 +7,7 @@ Output: OutreachDraft (or list[OutreachDraft] for multi-channel)
 
 from __future__ import annotations
 
-from zer0.domain import Contact, Lead
+from zer0.domain import Person, Lead
 from zer0.domain.config import Channel, ResolvedConfig
 from zer0.domain.outreach import OutreachDraft
 from zer0.llm.client import LLMClient
@@ -16,7 +16,7 @@ from zer0.llm.client import LLMClient
 def draft_outreach(
     *,
     lead: Lead,
-    contact: Contact | None = None,
+    person: Person | None = None,
     channel: Channel,
     sequence_number: int = 1,
     llm: LLMClient,
@@ -30,8 +30,8 @@ def draft_outreach(
     user = (
         f"Channel: {channel.value}\n"
         f"Sequence: {sequence_number}\n"
-        f"Contact name: {contact.full_name if contact else 'unknown'}\n"
-        f"Contact role: {contact.role if contact else 'unknown'}\n"
+        f"Person name: {person.full_name if person else 'unknown'}\n"
+        f"Person role: {person.role if person else 'unknown'}\n"
         f"Company: {lead.company_name}\n"
         f"Research summary: {lead.research_summary}\n"
         f"Score rationale: {lead.rationale}\n"

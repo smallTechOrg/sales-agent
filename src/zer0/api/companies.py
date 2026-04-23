@@ -1,6 +1,6 @@
-"""Customers endpoints.
+"""Companies endpoints.
 
-Spec: spec/product/09-api.md — /customers
+Spec: spec/product/09-api.md — /companies
 """
 
 from __future__ import annotations
@@ -12,19 +12,21 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
 from zer0.api._common import api_error, get_current_tenant_id, ok, paginated
-from zer0.db import CustomerRow, LeadRow, LinkLeadsRow, LinkRow, get_session
+from zer0.db import CompanyRow, LeadRow, LinkLeadsRow, LinkRow, get_session
 
-router = APIRouter(prefix="/customers")
+router = APIRouter(prefix="/companies")
 
 
 class SourceLinkOut(BaseModel):
     id: str
     url: str
+    source: str
     campaign_id: str | None
+    page_excerpt: str | None
     scraped_at: datetime | None
 
 
-class CustomerOut(BaseModel):
+class CompanyOut(BaseModel):
     id: str
     tenant_id: str
     domain: str
@@ -42,7 +44,7 @@ class CustomerOut(BaseModel):
     updated_at: datetime
 
 
-class CustomerPatch(BaseModel):
+class CompanyPatch(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     company_name: str | None = None
@@ -52,8 +54,8 @@ class CustomerPatch(BaseModel):
     notes: str | None = None
 
 
-def _row_to_out(row: CustomerRow, source_links: list[LinkRow] | None = None) -> CustomerOut:
-    return CustomerOut(
+def _row_to_out(row: CompanyRow, source_links: list[LinkRow] | None = None) -> CompanyOut:
+    return CompanyOut(
         id=row.id,
         tenant_id=row.tenant_id,
         domain=row.domain,
@@ -67,7 +69,11 @@ def _row_to_out(row: CustomerRow, source_links: list[LinkRow] | None = None) -> 
         first_seen_at=row.first_seen_at,
         last_enriched_at=row.last_enriched_at,
         source_links=[
-            SourceLinkOut(id=l.id, url=l.url, campaign_id=l.campaign_id, scraped_at=l.scraped_at)
+            SourceLinkOut(
+                id=l.id, url=l.url, source=l.source,
+                campaign_id=l.campaign_id, page_excerpt=l.page_excerpt,
+                scraped_at=l.scraped_at,
+            )
             for l in (source_links or [])
         ],
         created_at=row.created_at,
@@ -75,19 +81,19 @@ def _row_to_out(row: CustomerRow, source_links: list[LinkRow] | None = None) -> 
     )
 
 
-def _get_or_404(customer_id: str, tenant_id: str, session: Session) -> CustomerRow:
+def _get_or_404(company_id: str, tenant_id: str, session: Session) -> CompanyRow:
     row = (
-        session.query(CustomerRow)
-        .filter(CustomerRow.id == customer_id, CustomerRow.tenant_id == tenant_id)
+        session.query(CompanyRow)
+        .filter(CompanyRow.id == company_id, CompanyRow.tenant_id == tenant_id)
         .first()
     )
     if not row:
-        raise api_error("NOT_FOUND", "Customer not found", 404)
+        raise api_error("NOT_FOUND", "Company not found", 404)
     return row
 
 
 @router.get("")
-def list_customers(
+def list_companies(
     cursor: str | None = None,
     limit: int = 50,
     tenant_id: str = Depends(get_current_tenant_id),
@@ -97,12 +103,12 @@ def list_customers(
         raise api_error("INVALID_REQUEST", "limit must be ≤ 200")
 
     q = (
-        session.query(CustomerRow)
-        .filter(CustomerRow.tenant_id == tenant_id)
-        .order_by(CustomerRow.last_enriched_at.desc().nullslast(), CustomerRow.created_at.desc())
+        session.query(CompanyRow)
+        .filter(CompanyRow.tenant_id == tenant_id)
+        .order_by(CompanyRow.last_enriched_at.desc().nullslast(), CompanyRow.created_at.desc())
     )
     if cursor:
-        q = q.filter(CustomerRow.id < cursor)
+        q = q.filter(CompanyRow.id < cursor)
 
     rows = q.limit(limit + 1).all()
     has_more = len(rows) > limit
@@ -111,19 +117,19 @@ def list_customers(
     return paginated(items, next_cursor)
 
 
-@router.get("/{customer_id}")
-def get_customer(
-    customer_id: str,
+@router.get("/{company_id}")
+def get_company(
+    company_id: str,
     tenant_id: str = Depends(get_current_tenant_id),
     session: Session = Depends(get_session),
 ):
-    row = _get_or_404(customer_id, tenant_id, session)
+    row = _get_or_404(company_id, tenant_id, session)
     source_links = (
         session.query(LinkRow)
         .join(LinkLeadsRow, LinkLeadsRow.link_id == LinkRow.id)
         .join(LeadRow, LeadRow.id == LinkLeadsRow.lead_id)
         .filter(
-            LeadRow.customer_id == customer_id,
+            LeadRow.company_id == company_id,
             LeadRow.tenant_id == tenant_id,
             LinkRow.tenant_id == tenant_id,
         )
@@ -133,14 +139,14 @@ def get_customer(
     return ok(_row_to_out(row, source_links=source_links))
 
 
-@router.patch("/{customer_id}")
-def patch_customer(
-    customer_id: str,
-    body: CustomerPatch,
+@router.patch("/{company_id}")
+def patch_company(
+    company_id: str,
+    body: CompanyPatch,
     tenant_id: str = Depends(get_current_tenant_id),
     session: Session = Depends(get_session),
 ):
-    row = _get_or_404(customer_id, tenant_id, session)
+    row = _get_or_404(company_id, tenant_id, session)
     update = body.model_dump(exclude_unset=True)
     for field, value in update.items():
         setattr(row, field, value)

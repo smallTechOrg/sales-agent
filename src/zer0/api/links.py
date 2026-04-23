@@ -23,6 +23,7 @@ class LinkOut(BaseModel):
     campaign_id: str | None
     url: str
     source: str
+    page_excerpt: str | None
     scraped_at: datetime | None
     identified_at: datetime | None
     created_at: datetime
@@ -43,6 +44,7 @@ def _row_to_out(row: LinkRow) -> LinkOut:
         campaign_id=row.campaign_id,
         url=row.url,
         source=row.source,
+        page_excerpt=row.page_excerpt,
         scraped_at=row.scraped_at,
         identified_at=row.identified_at,
         created_at=row.created_at,
@@ -73,6 +75,22 @@ def list_links(
     items = [_row_to_out(r) for r in rows[:limit]]
     next_cursor = items[-1].id if has_more else None
     return paginated(items, next_cursor)
+
+
+@router.get("/{link_id}")
+def get_link(
+    link_id: str,
+    tenant_id: str = Depends(get_current_tenant_id),
+    session: Session = Depends(get_session),
+):
+    link = (
+        session.query(LinkRow)
+        .filter(LinkRow.id == link_id, LinkRow.tenant_id == tenant_id)
+        .first()
+    )
+    if not link:
+        raise api_error("NOT_FOUND", "Link not found", 404)
+    return ok(_row_to_out(link))
 
 
 @router.get("/{link_id}/leads")

@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from zer0.api._common import api_error, get_current_tenant_id, ok, paginated
 from zer0.db import LeadRow, MessageRow, get_session
-from zer0.db.models import ContactRow
+from zer0.db.models import PersonRow
 from zer0.observability.events import write_event
 
 router = APIRouter(prefix="/approvals")
@@ -24,6 +24,7 @@ class ApprovalDecision(BaseModel):
     decision: Literal["approve", "reject"]
     reason: str | None = None  # optional rejection reason
     body: str | None = None    # optional message body edit (approve-message only)
+    approved_person_ids: list[str] | None = None
 
 
 @router.get("")
@@ -117,11 +118,15 @@ def qualify_approval(
         # Move lead to outreach stage so the next run picks it up.
         # Spec: spec/product/04-capabilities/08-approval.md — approve → outreach
         row.stage = "outreach"
-        # Mark all contacts for this lead as approved for outreach.
-        session.query(ContactRow).filter(
-            ContactRow.lead_id == lead_id,
-            ContactRow.tenant_id == tenant_id,
-        ).update({"approved_for_outreach": True})
+        people = session.query(PersonRow).filter(
+            PersonRow.lead_id == lead_id,
+            PersonRow.tenant_id == tenant_id,
+        ).all()
+        selected_person_ids = set(body.approved_person_ids or [person.id for person in people])
+        if people and not selected_person_ids:
+            raise api_error("INVALID_REQUEST", "approved_person_ids must not be empty when approving", 400)
+        for person in people:
+            person.approved_for_outreach = person.id in selected_person_ids
         event_type = "approval.granted"
     else:
         row.stage = "rejected"
@@ -136,9 +141,17 @@ def qualify_approval(
         tenant_id=tenant_id,
         campaign_id=row.campaign_id,
         lead_id=lead_id,
-        payload={"decision": body.decision, "reason": body.reason},
+        payload={
+            "decision": body.decision,
+            "reason": body.reason,
+            "approved_person_ids": body.approved_person_ids,
+        },
     )
-    return ok({"decision": body.decision})
+    return ok({
+        "lead_id": lead_id,
+        "decision": body.decision,
+        "approved_person_ids": body.approved_person_ids,
+    })
 
 
 @router.post("/messages/{message_id}")
@@ -199,16 +212,25 @@ def message_approval(
                 sequence_number=row.sequence_number,
             )
 
-            # Get lead contact info for WhatsApp send
-            lead_row = session.query(LeadRow).filter(
-                LeadRow.id == row.lead_id, LeadRow.tenant_id == tenant_id
-            ).first()
+            person_row = None
+            if row.person_id:
+                person_row = session.query(PersonRow).filter(
+                    PersonRow.id == row.person_id,
+                    PersonRow.tenant_id == tenant_id,
+                ).first()
 
-            # Build a minimal lead object for _send_message
             class _LeadProxy:
-                contact_phone = (lead_row.enriched_data or {}).get("contact_phone", "") if lead_row else ""
+                pass
 
-            sm = _send_message(msg_draft=mock_draft, config=config, lead=_LeadProxy())
+            class _PersonProxy:
+                phone = person_row.phone if person_row else ""
+
+            sm = _send_message(
+                msg_draft=mock_draft,
+                config=config,
+                lead=_LeadProxy(),
+                person=_PersonProxy(),
+            )
 
             row.status = "sent"
             row.sent_at = sm.sent_at

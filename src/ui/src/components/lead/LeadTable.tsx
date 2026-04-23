@@ -10,7 +10,7 @@ const LEAD_STAGES: { value: string; label: string }[] = [
   { value: "prospect", label: "Prospect" },
   { value: "research", label: "Researching" },
   { value: "qualification", label: "Qualifying" },
-  { value: "contacts", label: "Contacts" },
+  { value: "people", label: "People" },
   { value: "approval", label: "Approval" },
   { value: "outreach", label: "Outreach" },
   { value: "first_contact", label: "Contacted" },

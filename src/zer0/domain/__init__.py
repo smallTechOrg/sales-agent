@@ -3,6 +3,7 @@
 Import all domain models from here rather than from sub-modules directly.
 """
 
+from zer0.domain.company import Company
 from zer0.domain.config import (
     ApprovalMode,
     Channel,
@@ -16,13 +17,12 @@ from zer0.domain.config import (
     ResolvedConfig,
     RubricCriterion,
 )
-from zer0.domain.contact import Contact
-from zer0.domain.customer import Customer
 from zer0.domain.lead import (
     Lead,
     LeadStage,
     PerCriterionScore,
 )
+from zer0.domain.person import Person
 from zer0.domain.link import Link, LinkSource
 from zer0.domain.outreach import (
     MessageStatus,
@@ -46,8 +46,8 @@ __all__ = [
     "ResolvedConfig",
     "RubricCriterion",
     # entities
-    "Contact",
-    "Customer",
+    "Person",
+    "Company",
     "Lead",
     "LeadStage",
     "Link",

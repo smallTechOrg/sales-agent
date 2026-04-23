@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import TypedDict
 
-from zer0.domain import Contact, Lead, Link
+from zer0.domain import Person, Lead, Link
 from zer0.domain.config import ResolvedConfig
 from zer0.domain.outreach import OutreachDraft, Reply, SentMessage
 
@@ -25,12 +25,12 @@ class AgentState(TypedDict, total=False):
     # --- Pipeline ---
     leads: list[Lead]
 
-    # --- Contacts ---
-    contacts: list[Contact]
+    # --- People ---
+    people: list[Person]
 
     # --- Approval gate ---
-    pending_approval_contact_ids: list[str]
-    approved_contact_ids: list[str]
+    pending_approval_person_ids: list[str]
+    approved_person_ids: list[str]
 
     # --- Outreach ---
     outreach_drafts: list[OutreachDraft]

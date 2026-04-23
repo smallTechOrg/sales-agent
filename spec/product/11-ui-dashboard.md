@@ -55,15 +55,15 @@ Every screen maps to one or more API endpoints. All operations are backed by the
 |---|---|
 | Dashboard home | `GET /api/v1/tenants` + health summary |
 | Leads view (global per-tenant) | `GET /api/v1/leads?all_campaigns` |
-| Customers view | `GET /api/v1/customers` |
+| Companies view | `GET /api/v1/companies` |
 | Tenant detail / pipeline view | `GET /api/v1/leads?campaign_id=...` |
 | Tenant onboarding wizard | `POST /api/v1/tenants` → credentials → campaign |
 | Campaign builder | `POST /api/v1/campaigns` / `PUT /api/v1/campaigns/{id}` |
 | Offering editor | `POST /api/v1/offerings` / `PUT /api/v1/offerings/{id}` |
 | Approval queue | `GET /api/v1/approvals` |
 | Lead detail | `GET /api/v1/leads/{id}` |
-| Customer detail | `GET /api/v1/customers/{id}` |
-| Contacts view | `GET /api/v1/contacts?lead_id=...` |
+| Company detail | `GET /api/v1/companies/{id}` |
+| People view | `GET /api/v1/people?lead_id=...` |
 | Messages view | `GET /api/v1/messages?campaign_id=...` |
 | Events log | `GET /api/v1/events?tenant_id=...` |
 | Operator settings | `GET /PUT /api/v1/settings` (operator-level) |
@@ -81,14 +81,14 @@ flowchart LR
     Login --> Dashboard
     Dashboard --> TenantDetail
     Dashboard --> LeadsGlobal["Leads view"]
-    Dashboard --> CustomersGlobal["Customers view"]
+    Dashboard --> CompaniesGlobal["Companies view"]
     Dashboard --> NewTenant["Onboarding wizard"]
     TenantDetail --> CampaignBuilder
     TenantDetail --> LeadPipeline
     TenantDetail --> ApprovalQueue
     LeadsGlobal --> LeadDetail
     LeadPipeline --> LeadDetail
-    CustomersGlobal --> CustomerDetail
+    CompaniesGlobal --> CompanyDetail
     CampaignBuilder --> OfferingEditor
     LeadDetail --> MessagesView
     LeadDetail --> EventsLog
@@ -145,7 +145,7 @@ The core operational screen per campaign. Shows all leads in their current stage
 ```mermaid
 flowchart LR
     Prospect --> Research --> Qualification
-    Qualification --> Contacts --> Approval --> Outreach
+    Qualification --> People --> Approval --> Outreach
     Qualification --> Rejected
     Outreach --> FirstContact
     Outreach --> NoContact
@@ -154,8 +154,9 @@ flowchart LR
 
 - **Filter bar:** stage, date range, source (LinkedIn / web / directory), score range.
 - **Lead row:** company name, domain, **source badge** (🌐 web / 💼 linkedin / 📚 directory), stage badge, score (if qualified), last activity timestamp, **research freshness icon** (🟢 < 7 days / 🟡 7–30 days / 🔴 > 30 days).
-- **Lead row hover details:** contact count, message count, industry, headcount_range, detected_language code.
+- **Lead row hover details:** people count, message count, industry, headcount_range, detected_language code.
 - **Trigger agent run button:** dispatches `POST /api/v1/campaigns/{id}/run` and shows a **gated progress indicator** reading from `GET /api/v1/events?campaign_id=...` (see "Run progress indicator" below).
+- **Runs list:** Accessible via a "Runs" tab or section on the campaign page. Shows recent runs (newest first) with columns: status badge, started_at (relative time), duration, leads processed, **input tokens**, **output tokens**, **estimated cost** (`$0.000000` format). Sourced from `GET /api/v1/campaigns/{id}/runs`.
 
 Clicking a lead row opens the lead detail drawer.
 
@@ -167,7 +168,7 @@ Cross-campaign view of all leads within a tenant. Accessible from the main dashb
 
 - **Filter bar:** campaign (dropdown select), stage, date range, source (LinkedIn / web / directory), score range.
 - **Lead row:** company name, domain, **source badge**, stage badge, score (if qualified), **last activity** (relative time), **research freshness icon**.
-- **Lead row hover details:** campaign name, contact count, message count, industry, headcount_range, detected_language code.
+- **Lead row hover details:** campaign name, people count, message count, industry, headcount_range, detected_language code.
 - **Read-only view:** Operators perform approval and message editing in the approval queue and campaign pipeline contexts, not here.
 
 Clicking a lead row opens the lead detail drawer (same detail view as pipeline).
@@ -181,6 +182,10 @@ Shows the full enrichment data, qualification scores, and message history for a 
 **Sections:**
 
 - **Profile:** `company_name`, `domain`, `industry`, `headcount_range`, **`detected_language`** (ISO 639-1 code, e.g. "en", "es", with flag emoji 🇺🇸), stage badge, score (if qualified), **source badge** (web / linkedin / directory from `links.source` via `lead.link_id`).
+
+- **Source:** Shown when `lead.link_id` is set. Displays:
+  - Source badge (🌐 web / 💼 linkedin / 📚 directory) with the full URL as a clickable link (opens in a new tab).
+  - Collapsible **"Page excerpt"** block — shows `links.page_excerpt` truncated to 200 chars with a "Show more" toggle expanding to the full 500-char excerpt. Displays "No excerpt available" when `page_excerpt` is null.
 
 - **Research timeline:** 
   - **Last researched:** `last_researched_at` formatted as relative time ("2 days ago") with absolute timestamp on hover.
@@ -200,16 +205,16 @@ Shows the full enrichment data, qualification scores, and message history for a 
   - **Content:** `rejection_reason` text + timestamp when rejected.
   - **Option:** "Unblock & retarget" button (future — not v1).
 
-- **Contacts:** 
-  - **Visibility:** Only shown when stage ≥ `contacts`.
-  - **List:** Each contact shows name, role, email, seniority level, `decision_maker_score`, approval status (approved / pending / not approved), and `outreach_stopped` flag.
-  - **Actions:** Operator can set `approved_for_outreach` per contact from this view (checkbox or toggle).
+- **People:** 
+  - **Visibility:** Only shown when stage ≥ `people`.
+  - **List:** Each person shows name, role, email, seniority level, `decision_maker_score`, approval status (approved / pending / not approved), and `outreach_stopped` flag.
+  - **Actions:** Operator can set `approved_for_outreach` per person from this view (checkbox or toggle).
 
-- **Messages:** Chronological list of sent/pending messages with channel badge (📧 email / 💬 WhatsApp), status badge, and body preview (truncated at 100 chars). Expandable to full body. Each row shows the contact the message targeted.
+- **Messages:** Chronological list of sent/pending messages with channel badge (📧 email / 💬 WhatsApp), status badge, and body preview (truncated at 100 chars). Expandable to full body. Each row shows the person the message targeted.
 
-- **Replies:** Inbound replies with associated contact, sentiment badge (😊 positive / 😐 neutral / 😞 negative), message body, and received timestamp (relative time).
+- **Replies:** Inbound replies with associated person, sentiment badge (😊 positive / 😐 neutral / 😞 negative), message body, and received timestamp (relative time).
 
-- **Events log:** Complete chronological audit trail of all state transitions and agent actions for this lead (e.g., "Researched by agent at 2:30 PM", "Score updated to 78", "Contact approved by operator at 3:15 PM").
+- **Events log:** Complete chronological audit trail of all state transitions and agent actions for this lead (e.g., "Researched by agent at 2:30 PM", "Score updated to 78", "Person approved by operator at 3:15 PM").
 
 ---
 
@@ -256,18 +261,18 @@ Visible on the dashboard badge when any campaign has `approval_mode` set. Shows 
 
 ---
 
-### Customers view
+### Companies view
 
 Tenant-wide persistent knowledge base of all identified companies. Cumulative data across all campaigns, enriched on every agent run.
 
 - **Filter bar:** industry, business type, size range, research freshness (fresh / stale / needs refresh), activity (has active leads / archived).
-- **Customer row:** company name, domain, **industry**, **business type** (enterprise / mid-market / SMB / etc.), **headcount range**, **research freshness icon** (🟢 < 7 days / 🟡 7–30 days / 🔴 > 30 days), **active lead count**, **total contacts discovered**, **last enriched timestamp** (relative time).
-- **Customer row hover details:** first seen timestamp, signal count (buying-intent signals detected), notes preview (first 100 chars).
-- **Customer click** → Opens a customer detail drawer (see "Customer detail" below).
+- **Company row:** company name, domain, **industry**, **business type** (enterprise / mid-market / SMB / etc.), **headcount range**, **research freshness icon** (🟢 < 7 days / 🟡 7–30 days / 🔴 > 30 days), **active lead count**, **total people discovered**, **last enriched timestamp** (relative time).
+- **Company row hover details:** first seen timestamp, signal count (buying-intent signals detected), notes preview (first 100 chars).
+- **Company click** → Opens a company detail drawer (see "Company detail" below).
 
 ---
 
-### Customer detail
+### Company detail
 
 Shows the cumulative intelligence for a single company across all campaigns and runs.
 
@@ -290,17 +295,22 @@ Shows the cumulative intelligence for a single company across all campaigns and 
   - Last edited by + timestamp.
 
 - **Leads & campaigns:** 
-  - Table of all leads referencing this customer, grouped by campaign.
+  - Table of all leads referencing this company, grouped by campaign.
   - Columns: campaign name, lead stage, score (if qualified), lead lead date (when discovered), latest activity.
   - Each row is clickable and opens the lead detail drawer.
 
-- **Contacts discovered:** 
-  - Table of all contacts from this company discovered across all campaigns.
+- **People discovered:** 
+  - Table of all people from this company discovered across all campaigns.
   - Columns: name, role, seniority level, decision maker score, campaigns contacted in (logos or list), latest outreach date.
-  - "View all contacts" link to filter the global contacts view by this customer.
+  - "View all people" link to filter the global people view by this company.
+
+- **Source links:**
+  - Table of all `links` that contributed to discovering this company (via the `link_leads` junction — `GET /api/v1/links?company_id=<id>`).
+  - Columns: source badge (🌐 / 💼 / 📚), URL (clickable, opens in new tab), scraped_at (relative time), excerpt (first 80 chars of `page_excerpt`, expandable inline to full 500 chars). "No excerpt" shown when null.
+  - Empty state: "No source links recorded" when no links have been associated.
 
 - **Activity timeline:** 
-  - Chronological log of all agent actions and operator actions related to this customer (e.g., "Researched by agent", "Lead qualified", "Contact approved by operator", "Message sent").
+  - Chronological log of all agent actions and operator actions related to this company (e.g., "Researched by agent", "Lead qualified", "Person approved by operator", "Message sent").
   - Timestamps and user/agent attribution.
 
 ---
@@ -352,7 +362,7 @@ The UI surfaces data already present in the DB. No new tables.
 | Tenant list + status | `tenants` |
 | Campaign summaries | `campaigns` |
 | Lead pipeline | `leads` |
-| Contacts per lead | `contacts` |
+| People per lead | `people` |
 | Messages + status | `messages` |
 | Replies + sentiment | `replies` |
 | Agent run events | `events` |

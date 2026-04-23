@@ -18,9 +18,10 @@ export function Sidebar() {
   const tenantNav: NavItem[] = activeTenantId
     ? [
         { label: "Overview", href: `/${activeTenantId}` },
+        { label: "Leads", href: `/${activeTenantId}/leads` },
         { label: "Offerings", href: `/${activeTenantId}/offerings` },
-        { label: "Customers", href: `/${activeTenantId}/customers` },
-        { label: "Contacts", href: `/${activeTenantId}/contacts` },
+        { label: "Companies", href: `/${activeTenantId}/companies` },
+        { label: "People", href: `/${activeTenantId}/people` },
         { label: "Approvals", href: `/${activeTenantId}/approvals` },
         { label: "Messages", href: `/${activeTenantId}/messages` },
         { label: "Events", href: `/${activeTenantId}/events` },
@@ -29,7 +30,7 @@ export function Sidebar() {
     : [];
 
   const navLink = ({ label, href }: NavItem) => {
-    const active = pathname === href;
+    const active = href === `/${activeTenantId}` ? pathname === href : pathname.startsWith(href);
     return (
       <Link
         key={href}

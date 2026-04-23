@@ -2,6 +2,7 @@
 
 Spec: spec/product/09-api.md
   POST   /tenants          — create a new tenant (no X-Tenant-ID required)
+  DELETE /tenants/{id}     — soft-delete a tenant (no X-Tenant-ID required)
   GET    /tenant           — get current tenant settings
   PATCH  /tenant           — update current tenant settings
 """
@@ -9,6 +10,7 @@ Spec: spec/product/09-api.md
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
@@ -53,6 +55,19 @@ def create_tenant(
     session.commit()
     session.refresh(t)
     return ok(TenantOut(id=t.id, name=t.name, retargeting_cooldown_days=t.retargeting_cooldown_days, default_approval_mode=t.default_approval_mode))
+
+
+@tenants_router.delete("/{tenant_id}", status_code=204)
+def delete_tenant(
+    tenant_id: str,
+    session: Session = Depends(get_session),
+):
+    t = session.query(TenantRow).filter(TenantRow.id == tenant_id, TenantRow.deleted_at.is_(None)).first()
+    if not t:
+        raise api_error("TENANT_NOT_FOUND", "Tenant not found", 404)
+    t.deleted_at = datetime.now(timezone.utc)
+    session.add(t)
+    session.commit()
 
 
 class TenantOut(BaseModel):

@@ -16,7 +16,7 @@ class LeadStage(str, Enum):
     prospect = "prospect"
     research = "research"
     qualification = "qualification"
-    contacts = "contacts"
+    people = "people"
     approval = "approval"
     outreach = "outreach"
     first_contact = "first_contact"
@@ -35,6 +35,7 @@ class Lead(BaseModel):
     tenant_id: str
     campaign_id: str
     link_id: str | None = None
+    company_id: str | None = None
     stage: LeadStage = LeadStage.prospect
     company_name: str | None = None
     domain: str | None = None

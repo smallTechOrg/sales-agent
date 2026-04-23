@@ -4,22 +4,22 @@
 
 ## Purpose
 
-Send cadenced follow-up messages to contacts who have not responded, up to the configured maximum number of follow-ups.
+Send cadenced follow-up messages to people who have not responded, up to the configured maximum number of follow-ups.
 
 ## Trigger
 
-The `node_check_replies` loop runs after `node_outreach`. It loops until all follow-up steps are exhausted for all active contacts, or a positive reply stops outreach for a lead.
+The `node_check_replies` loop runs after `node_outreach`. It loops until all follow-up steps are exhausted for all active people, or a positive reply stops outreach for a lead.
 
 ## Behavior
 
 1. Read `ResolvedConfig.outreach_config.follow_up_days` — a list of day-offsets, e.g. `[3, 7, 14]`.
 2. For each step:
    a. Poll for replies via `check_replies`.
-   b. If a **positive reply** is found for any contact on a lead:
+   b. If a **positive reply** is found for any person on a lead:
       - Reply handling takes over (see capability 06).
       - Exit the follow-up loop for that lead.
-   c. Otherwise, on the scheduled offset day, draft and send a follow-up to each active contact (i.e. `approved_for_outreach=true` and `outreach_stopped=false`).
-   d. Write `MessageRow(status="sent", sequence=n, contact_id=...)`.
+   c. Otherwise, on the scheduled offset day, draft and send a follow-up to each active person (i.e. `approved_for_outreach=true` and `outreach_stopped=false`).
+   d. Write `MessageRow(status="sent", sequence=n, person_id=...)`.
    e. Emit `followup_sent` event.
 3. After all steps complete with no positive reply, set lead `stage = "no_contact"`.
 
@@ -28,7 +28,7 @@ The `node_check_replies` loop runs after `node_outreach`. It loops until all fol
 | Key | Source |
 |---|---|
 | `sent_messages` | `AgentState.sent_messages` |
-| `contacts` | `AgentState.contacts` |
+| `people` | `AgentState.people` |
 | `follow_up_days` | `ResolvedConfig.outreach_config.follow_up_days` |
 | `max_follow_ups` | `ResolvedConfig.outreach_config.max_follow_ups` |
 
@@ -37,7 +37,7 @@ The `node_check_replies` loop runs after `node_outreach`. It loops until all fol
 | Output | Type |
 |---|---|
 | `AgentState.sent_messages` | Appended with follow-up messages |
-| `messages` DB rows | `status = "sent"`, `sequence > 0`, `contact_id` set |
+| `messages` DB rows | `status = "sent"`, `sequence > 0`, `person_id` set |
 | `events` DB rows | `followup_sent` per step |
 
 ## Failure modes
@@ -50,4 +50,4 @@ The `node_check_replies` loop runs after `node_outreach`. It loops until all fol
 ## Out of scope
 
 - Branching follow-up sequences based on reply sentiment (v1 is linear).
-- Per-contact day-offset customisation.
+- Per-person day-offset customisation.

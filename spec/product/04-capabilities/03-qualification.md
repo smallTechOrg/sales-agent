@@ -61,5 +61,5 @@ Score each researched lead against the campaign's ICP rubric and decide whether 
 
 ## Out of scope
 
-- Human review of qualification decisions — approval mode in v1 applies at the contact selection step, not qualification.
+- Human review of qualification decisions — approval mode in v1 applies at the people-selection step, not qualification.
 - Feedback loops that adjust rubric weights automatically.
