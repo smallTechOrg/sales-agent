@@ -12,6 +12,8 @@ logger = logging.getLogger(__name__)
 
 # (input_per_1m_usd, output_per_1m_usd)
 _PRICES: dict[str, tuple[float, float]] = {
+    "gemini-2.5-flash": (0.15, 0.60),
+    "gemini-2.5-flash-preview-04-17": (0.15, 0.60),
     "gemini-2.0-flash": (0.10, 0.40),
     "gemini-2.0-flash-lite": (0.075, 0.30),
     "gemini-1.5-flash": (0.075, 0.30),
