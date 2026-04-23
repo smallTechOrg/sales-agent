@@ -1,11 +1,11 @@
 "use client";
 
-import { use, useState } from "react";
+import { use, useState, useEffect } from "react";
 import { useCompanies } from "@/hooks/useCompanies";
-import type { SourceLinkData } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
+import type { SourceLinkData, CompanyData } from "@/lib/api";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { Spinner } from "@/components/ui/Spinner";
-import type { CompanyData } from "@/lib/api";
 
 function getFreshnessBadge(lastEnrichedAt: string | null) {
   if (!lastEnrichedAt) return { icon: "🔴", label: "Needs refresh", title: "No enrichment data yet" };
@@ -39,12 +39,33 @@ function RelativeTime({ timestamp }: { timestamp: string | null }) {
 }
 
 function CompanyDetailDrawer({
-  company,
+  tenantId,
+  companyId,
   onClose,
 }: {
-  company: CompanyData;
+  tenantId: string;
+  companyId: string;
   onClose: () => void;
 }) {
+  const [company, setCompany] = useState<CompanyData | null>(null);
+
+  useEffect(() => {
+    api
+      .getCompany(tenantId, companyId)
+      .then(setCompany)
+      .catch((e: unknown) => {
+        if (!(e instanceof ApiError)) console.error(e);
+      });
+  }, [tenantId, companyId]);
+
+  if (!company) {
+    return (
+      <div className="fixed inset-0 z-40 bg-black/50 flex items-center justify-center">
+        <Spinner />
+      </div>
+    );
+  }
+
   const freshness = getFreshnessBadge(company.last_enriched_at);
 
   return (
@@ -183,7 +204,7 @@ export default function CompaniesPage({
 }) {
   const { tenantId } = use(params);
   const { companies, loading, error } = useCompanies(tenantId);
-  const [selectedCompany, setSelectedCompany] = useState<CompanyData | null>(null);
+  const [selectedCompanyId, setSelectedCompanyId] = useState<string | null>(null);
 
   return (
     <div className="max-w-7xl mx-auto">
@@ -226,7 +247,7 @@ export default function CompaniesPage({
                   <tr
                     key={company.id}
                     className="hover:bg-slate-800/40 transition-colors cursor-pointer"
-                    onClick={() => setSelectedCompany(company)}
+                    onClick={() => setSelectedCompanyId(company.id)}
                   >
                     <td className="px-4 py-3 font-medium text-white">{company.company_name ?? "—"}</td>
                     <td className="px-4 py-3 text-slate-400 font-mono text-xs">{company.domain}</td>
@@ -256,10 +277,11 @@ export default function CompaniesPage({
         </div>
       )}
 
-      {selectedCompany && (
+      {selectedCompanyId && (
         <CompanyDetailDrawer
-          company={selectedCompany}
-          onClose={() => setSelectedCompany(null)}
+          tenantId={tenantId}
+          companyId={selectedCompanyId}
+          onClose={() => setSelectedCompanyId(null)}
         />
       )}
     </div>

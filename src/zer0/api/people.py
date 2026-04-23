@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from zer0.api._common import api_error, get_current_tenant_id, ok, paginated
 from zer0.db import get_session
-from zer0.db.models import PersonRow
+from zer0.db.models import LeadRow, LinkRow, PersonRow
 
 
 class PersonPatch(BaseModel):
@@ -21,6 +21,14 @@ class PersonPatch(BaseModel):
     outreach_stopped: bool | None = None
 
 router = APIRouter(prefix="/people")
+
+
+class PersonSourceLink(BaseModel):
+    id: str
+    url: str
+    source: str
+    page_excerpt: str | None
+    scraped_at: datetime | None
 
 
 class PersonOut(BaseModel):
@@ -37,11 +45,21 @@ class PersonOut(BaseModel):
     linkedin_url: str | None
     approved_for_outreach: bool
     outreach_stopped: bool
+    source_link: PersonSourceLink | None
     created_at: datetime
     updated_at: datetime
 
 
-def _row_to_out(row: PersonRow) -> PersonOut:
+def _row_to_out(row: PersonRow, link: LinkRow | None = None) -> PersonOut:
+    source_link = None
+    if link:
+        source_link = PersonSourceLink(
+            id=link.id,
+            url=link.url,
+            source=link.source,
+            page_excerpt=link.page_excerpt,
+            scraped_at=link.scraped_at,
+        )
     return PersonOut(
         id=row.id,
         tenant_id=row.tenant_id,
@@ -56,9 +74,17 @@ def _row_to_out(row: PersonRow) -> PersonOut:
         linkedin_url=row.linkedin_url,
         approved_for_outreach=row.approved_for_outreach,
         outreach_stopped=row.outreach_stopped,
+        source_link=source_link,
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
+
+
+def _fetch_link(person: PersonRow, session: Session) -> LinkRow | None:
+    lead = session.query(LeadRow).filter(LeadRow.id == person.lead_id).first()
+    if not lead or not lead.link_id:
+        return None
+    return session.query(LinkRow).filter(LinkRow.id == lead.link_id).first()
 
 
 @router.get("")
@@ -87,7 +113,8 @@ def list_people(
 
     rows = q.limit(limit + 1).all()
     has_more = len(rows) > limit
-    items = [_row_to_out(r) for r in rows[:limit]]
+    page = rows[:limit]
+    items = [_row_to_out(r, _fetch_link(r, session)) for r in page]
     return paginated(items, items[-1].id if has_more else None)
 
 
@@ -104,7 +131,7 @@ def get_person(
     )
     if not row:
         raise api_error("NOT_FOUND", "Person not found", 404)
-    return ok(_row_to_out(row))
+    return ok(_row_to_out(row, _fetch_link(row, session)))
 
 
 @router.patch("/{person_id}")

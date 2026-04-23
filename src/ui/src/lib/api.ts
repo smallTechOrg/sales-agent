@@ -277,6 +277,14 @@ export interface CampaignStats {
   replies_received: number;
 }
 
+export interface PersonSourceLink {
+  id: string;
+  url: string;
+  source: string;
+  page_excerpt: string | null;
+  scraped_at: string | null;
+}
+
 export interface PersonData {
   id: string;
   tenant_id: string;
@@ -291,6 +299,7 @@ export interface PersonData {
   linkedin_url: string | null;
   approved_for_outreach: boolean;
   outreach_stopped: boolean;
+  source_link: PersonSourceLink | null;
   created_at: string;
   updated_at: string;
 }
