@@ -248,8 +248,10 @@ Page text (first 3000 chars):
 def _analyse_link(llm: LLMClient, url: str, text: str) -> tuple[str, str, str]:
     """Return (page_type, page_summary, page_detail) from LLM analysis."""
     import json
-    prompt = _LINK_ANALYSIS_PROMPT.format(url=url, text=text[:3000])
-    raw = llm.complete(prompt)
+    raw = llm.complete(
+        system="You analyse web pages for a B2B sales pipeline. Respond with JSON only.",
+        user=_LINK_ANALYSIS_PROMPT.format(url=url, text=text[:3000]),
+    )
     try:
         start = raw.index("{")
         end = raw.rindex("}") + 1
