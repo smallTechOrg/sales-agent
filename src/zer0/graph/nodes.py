@@ -236,31 +236,32 @@ def node_scrape_links(state: AgentState) -> dict:
 
     updated: list[Link] = []
     for lnk in state.get("links", []):
-        if lnk.page_text:
+        if lnk.scraped_at:  # already attempted (success or permanent failure)
             updated.append(lnk)
             continue
+        now = _now()
         try:
             text = scrape_page(url=lnk.url)
-            now = _now()
             excerpt = text[:500] if text else None
             scraped = lnk.model_copy(update={"page_text": text, "page_excerpt": excerpt, "scraped_at": now})
             updated.append(scraped)
-            try:
-                with create_db_session() as session:
-                    row = (
-                        session.query(LinkRow)
-                        .filter(LinkRow.id == lnk.id, LinkRow.tenant_id == lnk.tenant_id)
-                        .first()
-                    )
-                    if row:
-                        row.page_text = text
-                        row.page_excerpt = excerpt
-                        row.scraped_at = now
-            except Exception as exc:
-                log.warning("scrape_links.db_write_failed", link_id=lnk.id, error=str(exc))
         except Exception as exc:
             log.warning("scrape_links.failed", link_id=lnk.id, url=lnk.url, error=str(exc))
-            updated.append(lnk)
+            text, excerpt = "", None
+            updated.append(lnk.model_copy(update={"scraped_at": now}))
+        try:
+            with create_db_session() as session:
+                row = (
+                    session.query(LinkRow)
+                    .filter(LinkRow.id == lnk.id, LinkRow.tenant_id == lnk.tenant_id)
+                    .first()
+                )
+                if row:
+                    row.page_text = text
+                    row.page_excerpt = excerpt
+                    row.scraped_at = now
+        except Exception as exc:
+            log.warning("scrape_links.db_write_failed", link_id=lnk.id, error=str(exc))
 
     return {"links": updated}
 

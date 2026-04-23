@@ -8,6 +8,8 @@ Output: cleaned page text (str)
 
 from __future__ import annotations
 
+from urllib.parse import urlparse
+
 import httpx
 from bs4 import BeautifulSoup  # type: ignore[import-untyped]
 
@@ -24,18 +26,42 @@ _HEADERS: dict[str, str] = {
     "Accept-Encoding": "gzip, deflate, br",
 }
 
-
 _HTML_CONTENT_TYPES = ("text/html", "text/plain", "application/xhtml")
+
+# Domains that systematically block HTTP scraping or require authentication.
+# Attempting to fetch these wastes time and always fails — skip immediately.
+_BLOCKED_DOMAINS: frozenset[str] = frozenset({
+    "facebook.com", "www.facebook.com", "m.facebook.com",
+    "linkedin.com", "www.linkedin.com",
+    "twitter.com", "www.twitter.com", "x.com", "www.x.com",
+    "instagram.com", "www.instagram.com",
+    "tiktok.com", "www.tiktok.com",
+    "reddit.com", "www.reddit.com", "old.reddit.com",
+    "pinterest.com", "www.pinterest.com",
+    "snapchat.com", "www.snapchat.com",
+    "youtube.com", "www.youtube.com", "youtu.be",
+})
+
+
+def _is_blocked(url: str) -> bool:
+    try:
+        host = urlparse(url).hostname or ""
+        return host in _BLOCKED_DOMAINS
+    except Exception:
+        return False
 
 
 def scrape_page(url: str) -> str:
     """Fetch a URL and return cleaned readable text.
 
-    Strips navigation, scripts, styles. Returns best-effort plain text.
-    Returns empty string for non-HTML content types (PDFs, binary files, etc.)
-    to prevent NUL bytes from crashing PostgreSQL TEXT column writes.
+    Returns empty string for blocked domains (social networks, auth-gated sites)
+    and for non-HTML content types (PDFs, binary files, etc.) to prevent NUL
+    bytes from crashing PostgreSQL TEXT column writes.
     Raises httpx.HTTPStatusError on 4xx/5xx after following redirects.
     """
+    if _is_blocked(url):
+        return ""
+
     with httpx.Client(headers=_HEADERS, timeout=15.0, follow_redirects=True) as client:
         response = client.get(url)
     response.raise_for_status()
