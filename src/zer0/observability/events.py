@@ -46,6 +46,7 @@ def write_event(
     campaign_id: str | None = None,
     lead_id: str | None = None,
     person_id: str | None = None,
+    run_id: str | None = None,
     config_snapshot: ResolvedConfig | None = None,
 ) -> None:
     """Write an event row to the audit log and emit a structured log entry.
@@ -64,8 +65,11 @@ def write_event(
         return
 
     from zer0.db.models import EventRow  # local import — avoids circular deps
+    from zer0.llm.usage_sink import current_run_id  # local import — avoids circular deps
 
     import uuid
+
+    resolved_run_id = run_id or current_run_id.get()
 
     row = EventRow(
         id=str(uuid.uuid4()),
@@ -73,6 +77,7 @@ def write_event(
         campaign_id=campaign_id,
         lead_id=lead_id,
         person_id=person_id,
+        run_id=resolved_run_id,
         event_type=event_type,
         payload=payload or {},
         config_snapshot=config_snapshot.model_dump() if config_snapshot else None,

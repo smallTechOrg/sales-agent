@@ -103,6 +103,10 @@ export interface CampaignData {
   volume_cap: number | null;
   approval_mode: string | null;
   status: string;
+  discovery_override: Record<string, unknown> | null;
+  icp_override: Record<string, unknown> | null;
+  qualification_override: Record<string, unknown> | null;
+  outreach_override: Record<string, unknown> | null;
   created_at: string;
   updated_at: string;
 }
@@ -259,6 +263,11 @@ export interface RunData {
   created_at: string;
 }
 
+export interface RunEventSummary {
+  run_id: string;
+  counts: Record<string, number>;
+}
+
 export interface CampaignStats {
   campaign_id: string;
   total_links: number;
@@ -355,6 +364,8 @@ export const api = {
     ),
   getRun: (tenantId: string, campaignId: string, runId: string) =>
     get<RunData>(`/api/v1/campaigns/${campaignId}/runs/${runId}`, tenantId),
+  getRunEventSummary: (tenantId: string, campaignId: string, runId: string) =>
+    get<RunEventSummary>(`/api/v1/campaigns/${campaignId}/runs/${runId}/events/summary`, tenantId),
   getCampaignStats: (tenantId: string, campaignId: string) =>
     get<CampaignStats>(`/api/v1/campaigns/${campaignId}/stats`, tenantId),
 

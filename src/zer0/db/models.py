@@ -295,6 +295,7 @@ class EventRow(Base):
     campaign_id: Mapped[str | None] = mapped_column(UUID(as_uuid=False), ForeignKey("campaigns.id"), nullable=True, index=True)
     lead_id: Mapped[str | None] = mapped_column(UUID(as_uuid=False), ForeignKey("leads.id"), nullable=True, index=True)
     person_id: Mapped[str | None] = mapped_column(UUID(as_uuid=False), ForeignKey("people.id"), nullable=True, index=True)
+    run_id: Mapped[str | None] = mapped_column(Text, nullable=True, index=True)
     event_type: Mapped[str] = mapped_column(Text, nullable=False)
     payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     config_snapshot: Mapped[dict | None] = mapped_column(JSONB, nullable=True)

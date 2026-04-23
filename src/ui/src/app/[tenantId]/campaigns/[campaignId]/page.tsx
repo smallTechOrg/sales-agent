@@ -10,7 +10,7 @@ import { LeadFilterBar, LeadTable } from "@/components/lead/LeadTable";
 import { LinksTable } from "@/components/campaign/LinksTable";
 import { ErrorBanner } from "@/components/ui/ErrorBanner";
 import { Spinner } from "@/components/ui/Spinner";
-import { api, type RunData, type EventData, type LeadData, type LinkData } from "@/lib/api";
+import { api, type RunData, type RunEventSummary, type EventData, type LeadData, type LinkData } from "@/lib/api";
 
 type Tab = "pipeline" | "activity" | "runs";
 
@@ -83,6 +83,66 @@ function NodePipeline({ run }: { run: RunData }) {
               <div className={`w-4 h-px mb-3 ${st === "completed" ? "bg-green-700" : "bg-slate-700"}`} />
             )}
           </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Per-stage counts pulled from run event summary ─────────────────────────
+
+const STAGE_GROUPS: { label: string; events: string[]; icon: string }[] = [
+  { label: "Links found",    events: ["link.discovered"],              icon: "🔗" },
+  { label: "Leads ID'd",     events: ["lead.identified"],              icon: "🏢" },
+  { label: "Researched",     events: ["lead.researched"],              icon: "🔬" },
+  { label: "Qualified",      events: ["lead.qualified"],               icon: "✅" },
+  { label: "Rejected",       events: ["lead.rejected"],                icon: "❌" },
+  { label: "People found",   events: ["person.discovered"],            icon: "👤" },
+  { label: "Pending review", events: ["approval.pending"],             icon: "⏳" },
+  { label: "Approved",       events: ["approval.granted"],             icon: "👍" },
+  { label: "Msgs sent",      events: ["message.sent"],                 icon: "📧" },
+  { label: "Msgs queued",    events: ["message.pending_approval"],     icon: "📋" },
+];
+
+function sumCounts(counts: Record<string, number>, events: string[]): number {
+  return events.reduce((acc, e) => acc + (counts[e] ?? 0), 0);
+}
+
+function RunStageCounts({
+  tenantId,
+  campaignId,
+  run,
+}: {
+  tenantId: string;
+  campaignId: string;
+  run: RunData;
+}) {
+  const [summary, setSummary] = useState<RunEventSummary | null>(null);
+
+  useEffect(() => {
+    api
+      .getRunEventSummary(tenantId, campaignId, run.id)
+      .then(setSummary)
+      .catch(() => {/* silently ignore — no events yet */});
+  }, [tenantId, campaignId, run.id]);
+
+  if (!summary) return null;
+
+  const active = STAGE_GROUPS.filter(
+    (g) => sumCounts(summary.counts, g.events) > 0
+  );
+  if (active.length === 0) return null;
+
+  return (
+    <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
+      {active.map((g) => {
+        const n = sumCounts(summary.counts, g.events);
+        return (
+          <span key={g.label} className="flex items-center gap-1 text-xs text-slate-400">
+            <span>{g.icon}</span>
+            <span className="font-mono text-white">{n}</span>
+            <span>{g.label}</span>
+          </span>
         );
       })}
     </div>
@@ -469,6 +529,7 @@ export default function CampaignLeadPipelinePage({
                     </span>
                   </div>
                   <NodePipeline run={r} />
+                  <RunStageCounts tenantId={tenantId} campaignId={campaignId} run={r} />
                   {(r.total_tokens > 0 || r.llm_call_count > 0) && (
                     <div className="mt-2 flex items-center gap-4 text-xs text-slate-500">
                       <span>{r.llm_call_count} LLM calls</span>

@@ -14,7 +14,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from zer0.api._common import api_error, get_current_tenant_id, ok, paginated
-from zer0.db import CampaignRow, CampaignRunRow, LeadRow, LinkRow, MessageRow, ReplyRow, get_session
+from zer0.db import CampaignRow, CampaignRunRow, EventRow, LeadRow, LinkRow, MessageRow, ReplyRow, get_session
 
 router = APIRouter(prefix="/campaigns")
 
@@ -28,6 +28,10 @@ class CampaignOut(BaseModel):
     volume_cap: int | None
     approval_mode: str | None
     status: str
+    discovery_override: dict | None
+    icp_override: dict | None
+    qualification_override: dict | None
+    outreach_override: dict | None
     created_at: datetime
     updated_at: datetime
 
@@ -78,6 +82,10 @@ def _row_to_out(c: CampaignRow) -> CampaignOut:
         id=c.id, tenant_id=c.tenant_id, offering_id=c.offering_id,
         name=c.name, schedule=c.schedule, volume_cap=c.volume_cap,
         approval_mode=c.approval_mode, status=c.status,
+        discovery_override=c.discovery_override,
+        icp_override=c.icp_override,
+        qualification_override=c.qualification_override,
+        outreach_override=c.outreach_override,
         created_at=c.created_at, updated_at=c.updated_at,
     )
 
@@ -305,3 +313,30 @@ def get_run(
     if not row:
         raise api_error("NOT_FOUND", "Run not found", 404)
     return ok(_run_to_out(row))
+
+
+@router.get("/{campaign_id}/runs/{run_id}/events/summary")
+def get_run_event_summary(
+    campaign_id: str,
+    run_id: str,
+    tenant_id: str = Depends(get_current_tenant_id),
+    session: Session = Depends(get_session),
+):
+    """Return per-event-type counts for a run.
+
+    Aggregates events tagged with this run_id. Used by the UI to show
+    per-stage progress details on each run card.
+    """
+    _get_or_404(campaign_id, tenant_id, session)
+    rows = (
+        session.query(EventRow.event_type, func.count(EventRow.id))
+        .filter(
+            EventRow.tenant_id == tenant_id,
+            EventRow.campaign_id == campaign_id,
+            EventRow.run_id == run_id,
+        )
+        .group_by(EventRow.event_type)
+        .all()
+    )
+    counts = {event_type: count for event_type, count in rows}
+    return ok({"run_id": run_id, "counts": counts})

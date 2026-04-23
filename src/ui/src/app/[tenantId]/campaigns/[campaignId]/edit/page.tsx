@@ -29,11 +29,16 @@ export default function EditCampaignPage({
           name: c.name,
           offering_id: c.offering_id,
           approval_mode: (c.approval_mode as CampaignState["approval_mode"]) ?? "full_auto",
-          discovery_sources: "web",
-          qualification_threshold: 60,
-          outreach_channels: "email",
-          follow_up_count: 2,
-          follow_up_spacing_days: 3,
+          discovery_sources:
+            (c.discovery_override?.sources as string[] | undefined)?.join(", ") ?? "web",
+          qualification_threshold:
+            (c.qualification_override?.score_threshold as number | undefined) ?? 60,
+          outreach_channels:
+            (c.outreach_override?.channels_enabled as string[] | undefined)?.join(", ") ?? "email",
+          follow_up_count:
+            (c.outreach_override?.follow_up_count as number | undefined) ?? 2,
+          follow_up_spacing_days:
+            (c.outreach_override?.follow_up_spacing_days as number | undefined) ?? 3,
         })
       )
       .catch((e) => setLoadError(e instanceof ApiError ? e.message : String(e)));
